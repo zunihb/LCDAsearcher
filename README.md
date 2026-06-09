@@ -101,7 +101,48 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Editar .env con tu LLM_API_KEY (opcional pero recomendado)
+# Editar .env con tu API key (ver sección OpenCode Go abajo)
+python scripts/test_llm.py          # 1) probar que el LLM responde
+python main.py                      # 2) pipeline completo
+```
+
+### Probar con OpenCode Go
+
+1. Copia tu API key de [opencode.ai](https://opencode.ai) en `.env`:
+
+```env
+LLM_BASE_URL=https://opencode.ai/zen/go/v1
+LLM_API_KEY=sk-tu-clave
+LLM_MODEL=deepseek-v4-flash
+```
+
+2. **Modelos compatibles** con este proyecto (endpoint OpenAI `/v1/chat/completions`):
+
+| Model ID | Nombre |
+|----------|--------|
+| `deepseek-v4-flash` | DeepSeek V4 Flash (barato, recomendado para pruebas) |
+| `deepseek-v4-pro` | DeepSeek V4 Pro |
+| `glm-5.1` | GLM-5.1 |
+| `glm-5` | GLM-5 |
+| `kimi-k2.6` | Kimi K2.6 |
+| `kimi-k2.5` | Kimi K2.5 |
+| `mimo-v2.5` | MiMo-V2.5 |
+| `mimo-v2.5-pro` | MiMo-V2.5-Pro |
+
+3. **No compatibles** con el cliente actual (usan API Anthropic `/v1/messages`): MiniMax M2.5/M2.7/M3, Qwen3.6/3.7 Plus/Max.
+
+```bash
+# Probar conexión
+python scripts/test_llm.py
+
+# Probar todos los modelos chat/completions
+python scripts/test_llm.py --all
+
+# Demo rápido sin Google Scholar
+python scripts/seed_demo.py
+python main.py --skip-extract --skip-citations --reprocess-keywords
+
+# Pipeline real (requiere Scholar + puede tardar)
 python main.py
 ```
 

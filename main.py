@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--skip-extract", action="store_true", help="Omitir extracción Scholar")
     parser.add_argument("--skip-citations", action="store_true", help="Omitir citantes")
     parser.add_argument("--skip-keywords", action="store_true", help="Omitir keywords IA")
+    parser.add_argument("--reprocess-keywords", action="store_true", help="Borrar keywords y reprocesar con LLM")
     parser.add_argument("--skip-trends", action="store_true", help="Omitir tendencias OpenAlex")
     parser.add_argument("--force-refresh", action="store_true", help="Re-scrapear Scholar (ignorar caché)")
     args = parser.parse_args()
@@ -72,6 +73,13 @@ def main() -> int:
         print(f"      → {r['citantes']} citantes en {r['duracion_seg']:.1f}s")
     else:
         print("[2/6] Citantes omitidos")
+
+    if args.reprocess_keywords:
+        print("[*] Reprocesando keywords (limpia tablas keywords)...")
+        with db.connect() as conn:
+            conn.execute("DELETE FROM tendencias_globales")
+            conn.execute("DELETE FROM paper_keywords")
+            conn.execute("DELETE FROM keywords")
 
     if not args.skip_keywords:
         print("[3/6] Keywords con IA...")
