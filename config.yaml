@@ -1,0 +1,36 @@
+# Perfiles del piloto (Google Scholar user IDs)
+investigadores:
+  - scholar_id: Wk2naEgAAAAJ
+    nombre: José R. Espinoza
+    afiliacion: Universidad de Concepción
+  - scholar_id: 6O2aO7IAAAAJ
+    nombre: Miguel Torres
+    afiliacion: Universidad de los Andes
+
+# Extracción
+scholarly:
+  use_proxies: false
+  pause_min_sec: 2
+  pause_max_sec: 5
+
+# Citantes (acotado para evitar bloqueos)
+citations:
+  top_papers: 5
+  max_citantes_por_paper: 50
+
+# Keywords con IA
+keywords:
+  por_paper: 5
+  batch_size: 10
+  idioma: es
+
+# Tendencias (OpenAlex)
+trends:
+  enabled: true
+  openalex_mailto: lcda-searcher@example.com
+  top_n_keywords: 15
+  ventana_anios: 6
+
+# Salidas
+output_dir: output
+data_dir: data

@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LCDA Searcher — Mapeo de Sinergias de Investigación con IA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f3ef;
+    --bg-soft: #eceae5;
+    --panel: #ffffff;
+    --panel-edge: #ddd9d2;
+    --ink: #1a1714;
+    --ink-dim: #5a524a;
+    --ink-faint: #9e9488;
+    --cyan: #0077a8;
+    --cyan-soft: rgba(0, 119, 168, 0.08);
+    --amber: #c4620a;
+    --amber-soft: rgba(196, 98, 10, 0.08);
+    --green: #1a7a4a;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --display: 'Fraunces', serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.65;
+    overflow-x: hidden;
+  }
+  /* fondo de red de puntos */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(0,119,168,0.13) 1px, transparent 1px);
+    background-size: 34px 34px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  /* ============ HERO ============ */
+  header {
+    min-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .kicker::before { content: ''; width: 40px; height: 1px; background: var(--cyan); }
+  h1 {
+    font-family: var(--display);
+    font-weight: 300;
+    font-size: clamp(2.6rem, 6vw, 4.6rem);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    max-width: 850px;
+  }
+  h1 em {
+    font-style: italic;
+    font-weight: 600;
+    color: var(--cyan);
+  }
+  .hero-sub {
+    margin-top: 28px;
+    font-size: 1.15rem;
+    color: var(--ink-dim);
+    max-width: 620px;
+  }
+  .hero-meta {
+    margin-top: 48px;
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+  }
+  .hero-meta b { color: var(--ink); font-weight: 500; display: block; font-size: 0.95rem; }
+  .scroll-hint {
+    position: absolute;
+    bottom: 36px;
+    left: 32px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.15em;
+    animation: bob 2.4s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(6px); } }
+
+  /* ============ SECCIONES ============ */
+  section { padding: 90px 0; }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--amber);
+    letter-spacing: 0.2em;
+    margin-bottom: 14px;
+  }
+  h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+    line-height: 1.15;
+    margin-bottom: 22px;
+    max-width: 720px;
+  }
+  .lead { font-size: 1.08rem; color: var(--ink-dim); max-width: 680px; margin-bottom: 40px; }
+  .lead strong, p strong { color: var(--ink); font-weight: 500; }
+
+  /* tarjetas de concepto */
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    padding: 28px 26px;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+  .card:hover { border-color: rgba(0,119,168,0.45); transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.07); }
+  .card .icon {
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.3rem;
+    margin-bottom: 18px;
+    background: var(--cyan-soft);
+    border: 1px solid rgba(0,119,168,0.15);
+  }
+  .card h3 { font-weight: 600; font-size: 1.02rem; margin-bottom: 8px; }
+  .card p { font-size: 0.92rem; color: var(--ink-dim); }
+  .card .tag {
+    display: inline-block;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--cyan);
+    border: 1px solid rgba(0,119,168,0.3);
+    border-radius: 99px;
+    padding: 3px 10px;
+    background: var(--cyan-soft);
+  }
+
+  /* pipeline */
+  .pipeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; counter-reset: step; }
+  .step {
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-radius: 12px;
+    padding: 24px 22px;
+    position: relative;
+  }
+  .step::before {
+    counter-increment: step;
+    content: '0' counter(step);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--amber);
+    letter-spacing: 0.1em;
+  }
+  .step h4 { font-weight: 600; font-size: 0.98rem; margin: 10px 0 6px; }
+  .step p { font-size: 0.86rem; color: var(--ink-dim); }
+  .step code {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--green);
+    background: rgba(94,230,168,0.08);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  /* ============ GRAFO ============ */
+  .graph-shell {
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-radius: 18px;
+    overflow: hidden;
+    position: relative;
+  }
+  .graph-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--panel-edge);
+    background: var(--panel);
+  }
+  .graph-toolbar .title { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-dim); letter-spacing: 0.08em; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink-dim); }
+  .legend span { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  #grafo { width: 100%; height: 560px; }
+  .graph-caption {
+    padding: 14px 22px;
+    border-top: 1px solid var(--panel-edge);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+  }
+  .graph-caption b { color: var(--cyan); font-weight: 500; }
+
+  /* ============ TABLA SINERGIAS ============ */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    overflow: hidden;
+    font-size: 0.92rem;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--panel-edge);
+    background: var(--bg-soft);
+  }
+  tbody td { padding: 14px 20px; border-bottom: 1px solid var(--panel-edge); color: var(--ink-dim); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(0,119,168,0.04); }
+  td.kw { color: var(--ink); font-weight: 500; }
+  .bar-cell { min-width: 120px; }
+  .bar {
+    height: 7px;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--cyan), var(--green));
+  }
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    padding: 2px 10px;
+    border-radius: 99px;
+  }
+  .pill.alta { background: rgba(26,122,74,0.1); color: var(--green); border: 1px solid rgba(26,122,74,0.25); }
+  .pill.media { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(196,98,10,0.25); }
+
+  /* ============ METRICAS ============ */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+  .metric {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    padding: 30px 26px;
+    text-align: left;
+  }
+  .metric .big {
+    font-family: var(--display);
+    font-size: 2.6rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--cyan);
+  }
+  .metric .big.amber { color: var(--amber); }
+  .metric .big.green { color: var(--green); }
+  .metric .lbl { margin-top: 10px; font-size: 0.88rem; color: var(--ink-dim); }
+  .vs-box {
+    margin-top: 26px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 20px;
+    align-items: center;
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    padding: 28px 30px;
+  }
+  .vs-side h4 { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 8px; }
+  .vs-side.manual h4 { color: var(--amber); }
+  .vs-side.auto h4 { color: var(--green); }
+  .vs-side p { font-size: 0.88rem; color: var(--ink-dim); }
+  .vs-mid {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 1.4rem;
+    color: var(--ink-faint);
+  }
+
+  /* ============ ESCALABILIDAD ============ */
+  .scale-list { display: grid; gap: 14px; margin-top: 10px; }
+  .scale-item {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 18px;
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-left: 3px solid var(--cyan);
+    border-radius: 12px;
+    padding: 22px 24px;
+    align-items: start;
+  }
+  .scale-item .n {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 1.7rem;
+    color: var(--cyan);
+    opacity: 0.85;
+  }
+  .scale-item h4 { font-weight: 600; font-size: 1rem; margin-bottom: 5px; }
+  .scale-item p { font-size: 0.9rem; color: var(--ink-dim); }
+
+  /* ============ RAG / PDFs ============ */
+  .rag-flow {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr;
+    gap: 10px;
+    align-items: stretch;
+    margin-top: 10px;
+  }
+  .rag-step {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-top: 3px solid var(--cyan);
+    border-radius: 12px;
+    padding: 22px 20px;
+    transition: transform 0.3s, box-shadow 0.3s;
+  }
+  .rag-step:hover { transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.07); }
+  .rag-ic {
+    width: 38px; height: 38px;
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+    margin-bottom: 14px;
+    background: var(--cyan-soft);
+    border: 1px solid rgba(0,119,168,0.2);
+    color: var(--cyan);
+  }
+  .rag-step h4 { font-family: var(--mono); font-size: 0.82rem; letter-spacing: 0.04em; margin-bottom: 8px; color: var(--ink); }
+  .rag-step p { font-size: 0.85rem; color: var(--ink-dim); }
+  .rag-step .hl {
+    color: var(--amber);
+    font-weight: 500;
+    background: var(--amber-soft);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+  .rag-arrow {
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--display);
+    font-size: 1.4rem;
+    color: var(--ink-faint);
+  }
+  .rag-benefits {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .rag-ben {
+    background: var(--bg-soft);
+    border: 1px solid var(--panel-edge);
+    border-left: 3px solid var(--amber);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .rag-ben h4 { font-weight: 600; font-size: 0.98rem; margin-bottom: 6px; }
+  .rag-ben p { font-size: 0.88rem; color: var(--ink-dim); }
+  @media (max-width: 820px) {
+    .rag-flow { grid-template-columns: 1fr; }
+    .rag-arrow { transform: rotate(90deg); padding: 2px 0; }
+  }
+
+  /* ============ CTA ============ */
+  .cta {
+    background: linear-gradient(135deg, rgba(0,119,168,0.06), rgba(196,98,10,0.05));
+    border: 1px solid rgba(0,119,168,0.2);
+    border-radius: 18px;
+    padding: 48px 44px;
+  }
+  .cta h2 { margin-bottom: 14px; }
+  .cta p { color: var(--ink-dim); max-width: 640px; }
+  .cta .req {
+    margin-top: 26px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .cta .req span {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--cyan);
+    border: 1px dashed rgba(0,119,168,0.4);
+    border-radius: 8px;
+    padding: 8px 14px;
+    background: rgba(0,119,168,0.05);
+  }
+  footer {
+    padding: 50px 0 60px;
+    border-top: 1px solid var(--panel-edge);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    background: var(--bg);
+  }
+
+  /* reveal on scroll */
+  .reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  @media (max-width: 640px) {
+    .vs-box { grid-template-columns: 1fr; }
+    .vs-mid { display: none; }
+    #grafo { height: 420px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header>
+    <div class="kicker">Propuesta · Prueba de concepto</div>
+    <h1>Mapeo de investigadores con <em>grafos de conocimiento</em> e inteligencia artificial</h1>
+    <p class="hero-sub">
+      Un sistema que lee perfiles de Google Scholar, extrae y estandariza temas de investigación
+      con IA, y revela automáticamente <strong style="color:var(--ink)">quién puede colaborar con quién</strong> — visualizado
+      como una red interactiva.
+    </p>
+    <div class="hero-meta">
+      <div><b>Piloto</b>J.&nbsp;Espinoza × M.&nbsp;Torres</div>
+      <div><b>Datos reales</b>309+ publicaciones · 12.900 citas</div>
+      <div><b>Escalable a</b>80–90 investigadores</div>
+    </div>
+    <div class="scroll-hint">▼ DESPLAZAR</div>
+  </header>
+
+  <!-- ================= 01 PROBLEMA ================= -->
+  <section class="reveal">
+    <div class="sec-num">01 — EL PROBLEMA</div>
+    <h2>Encontrar sinergias entre 90 investigadores, a mano, es inviable</h2>
+    <p class="lead">
+      Revisar manualmente cientos de publicaciones por investigador para detectar temas en común
+      toma <strong>horas por persona</strong> y el resultado queda obsoleto con cada nuevo paper.
+      Con 90 perfiles son <strong>~4.000 pares posibles de colaboración</strong> que nadie puede evaluar a ojo.
+    </p>
+    <div class="grid3">
+      <div class="card">
+        <div class="icon">●</div>
+        <h3>Nodos</h3>
+        <p>Investigadores, papers y palabras clave se representan como puntos de una red semántica.</p>
+        <span class="tag">Investigador · Paper · Keyword</span>
+      </div>
+      <div class="card">
+        <div class="icon">⟋</div>
+        <h3>Aristas</h3>
+        <p>Las líneas codifican relaciones: "coautor de", "investiga sobre", "citado por".</p>
+        <span class="tag">autor_de · trata_sobre · cita_a</span>
+      </div>
+      <div class="card">
+        <div class="icon">◎</div>
+        <h3>Sinergias emergentes</h3>
+        <p>Cuando dos investigadores comparten keywords o citas, la red lo revela sola — sin leer un solo paper.</p>
+        <span class="tag">match automático</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 02 PIPELINE ================= -->
+  <section class="reveal">
+    <div class="sec-num">02 — CÓMO FUNCIONA</div>
+    <h2>Pipeline automático en cinco pasos</h2>
+    <p class="lead">Todo queda persistido en una <strong>base de datos consultable</strong> (SQLite): el grafo se reconstruye y actualiza cuando se quiera, y los datos sirven para cualquier análisis futuro.</p>
+    <div class="pipeline">
+      <div class="step">
+        <h4>Extracción</h4>
+        <p>Se descargan perfil, métricas (índice h, citas) y todas las publicaciones desde <code>Google Scholar</code>.</p>
+      </div>
+      <div class="step">
+        <h4>Citas y coautores</h4>
+        <p>Por cada paper: conteo de citas + papers citantes con sus autores → <code>nuevos candidatos</code>.</p>
+      </div>
+      <div class="step">
+        <h4>IA / NLP</h4>
+        <p>Un LLM extrae 5 keywords por paper y <code>estandariza</code> términos ("PLL" = "phase-locked loop").</p>
+      </div>
+      <div class="step">
+        <h4>Cruce de datos</h4>
+        <p>SQL detecta intersecciones: keywords compartidas, coautorías directas, citas cruzadas.</p>
+      </div>
+      <div class="step">
+        <h4>Visualización</h4>
+        <p>Grafo interactivo HTML + tabla de sinergias + <code>reporte automático</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 03 DEMO GRAFO ================= -->
+  <section class="reveal">
+    <div class="sec-num">03 — DEMOSTRACIÓN CON DATOS REALES</div>
+    <h2>La red Espinoza – Torres, construida desde sus perfiles</h2>
+    <p class="lead">
+      Este grafo usa <strong>publicaciones reales</strong> de ambos perfiles de Google Scholar.
+      El tamaño de cada paper es proporcional a sus citas. Las keywords al centro
+      son los <strong>puentes de colaboración</strong> detectados. <em style="color:var(--ink-faint)">— Arrastra, acerca y explora.</em>
+    </p>
+    <div class="graph-shell">
+      <div class="graph-toolbar">
+        <span class="title">grafo_piloto.html — vista previa interactiva</span>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--amber)"></span>Investigador</span>
+          <span><span class="dot" style="background:var(--cyan)"></span>Keyword</span>
+          <span><span class="dot" style="background:#6b7f96"></span>Paper (tamaño = citas)</span>
+        </div>
+      </div>
+      <div id="grafo"></div>
+    <div class="graph-caption" style="background:var(--bg-soft);">
+      Hallazgo automático: <b>5 coautorías directas</b> y <b>6 temas compartidos</b> entre ambos perfiles,
+      detectados sin leer un solo paper manualmente.
+    </div>
+    </div>
+  </section>
+
+  <!-- ================= 04 SINERGIAS ================= -->
+  <section class="reveal">
+    <div class="sec-num">04 — TABLA DE SINERGIAS</div>
+    <h2>Temas en común, cuantificados</h2>
+    <p class="lead">Ejemplo del entregable generado automáticamente a partir de los dos perfiles del piloto.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Keyword estandarizada</th>
+          <th>J. Espinoza</th>
+          <th>M. Torres</th>
+          <th class="bar-cell">Fuerza</th>
+          <th>Potencial</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="kw">Sincronización PLL en redes contaminadas</td>
+          <td>4 papers</td><td>3 papers</td>
+          <td class="bar-cell"><div class="bar" style="width:92%"></div></td>
+          <td><span class="pill alta">ALTA</span></td>
+        </tr>
+        <tr>
+          <td class="kw">Máquina síncrona virtual / inercia</td>
+          <td>3 papers</td><td>9 papers</td>
+          <td class="bar-cell"><div class="bar" style="width:88%"></div></td>
+          <td><span class="pill alta">ALTA</span></td>
+        </tr>
+        <tr>
+          <td class="kw">Integración fotovoltaica multinivel</td>
+          <td>8 papers</td><td>4 papers</td>
+          <td class="bar-cell"><div class="bar" style="width:80%"></div></td>
+          <td><span class="pill alta">ALTA</span></td>
+        </tr>
+        <tr>
+          <td class="kw">Control predictivo (FCS-MPC)</td>
+          <td>40+ papers</td><td>2 papers</td>
+          <td class="bar-cell"><div class="bar" style="width:55%"></div></td>
+          <td><span class="pill media">MEDIA</span></td>
+        </tr>
+        <tr>
+          <td class="kw">Regulación de frecuencia en microrredes</td>
+          <td>5 papers</td><td>7 papers</td>
+          <td class="bar-cell"><div class="bar" style="width:74%"></div></td>
+          <td><span class="pill alta">ALTA</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin-top:18px; font-size:0.85rem; color:var(--ink-faint); font-family:var(--mono)">
+      * Valores ilustrativos basados en los títulos reales de ambos perfiles; el piloto los calcula con precisión sobre el texto completo de abstracts.
+    </p>
+  </section>
+
+  <!-- ================= 05 METRICAS ================= -->
+  <section class="reveal">
+    <div class="sec-num">05 — EL ARGUMENTO</div>
+    <h2>Lo que se mide en el piloto</h2>
+    <div class="metrics">
+      <div class="metric">
+        <div class="big">12.900</div>
+        <div class="lbl">citas procesables del perfil Espinoza (índice h = 50, 309 publicaciones)</div>
+      </div>
+      <div class="metric">
+        <div class="big amber">~4.005</div>
+        <div class="lbl">pares posibles de colaboración entre 90 investigadores — imposible de evaluar a mano</div>
+      </div>
+      <div class="metric">
+        <div class="big green">minutos</div>
+        <div class="lbl">tiempo del pipeline por investigador, contra horas de revisión manual</div>
+      </div>
+    </div>
+    <div class="vs-box">
+      <div class="vs-side manual">
+        <h4>Proceso manual</h4>
+        <p>Leer cientos de títulos y abstracts por investigador, anotar temas, cruzar a mano contra cada otro perfil. <strong>Horas por persona</strong>, resultado estático y subjetivo.</p>
+      </div>
+      <div class="vs-mid">vs.</div>
+      <div class="vs-side auto">
+        <h4>Con el sistema</h4>
+        <p>Se entrega la lista de IDs de Scholar y el pipeline genera grafo, tabla de sinergias y reporte. <strong>Minutos por investigador</strong>, repetible y siempre actualizable.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 06 ESCALABILIDAD ================= -->
+  <section class="reveal">
+    <div class="sec-num">06 — VISIÓN A FUTURO</div>
+    <h2>Del piloto a los 90 investigadores</h2>
+    <p class="lead">La arquitectura del piloto ya está diseñada para escalar: agregar un investigador es <strong>agregar una línea de configuración</strong>.</p>
+    <div class="scale-list">
+      <div class="scale-item">
+        <div class="n">a</div>
+        <div>
+          <h4>Clustering automático de comunidades</h4>
+          <p>El sistema agrupa a los 90 perfiles en sub-comunidades temáticas (ej. "Grupo de Potencia", "Control Automático", "Software") mediante algoritmos de detección de comunidades sobre el grafo.</p>
+        </div>
+      </div>
+      <div class="scale-item">
+        <div class="n">b</div>
+        <div>
+          <h4>Buscador interno de expertos</h4>
+          <p>Una interfaz web donde se escribe "necesito un experto en análisis de Lyapunov" y el sistema responde quiénes han publicado sobre eso dentro del proyecto, ordenados por relevancia.</p>
+        </div>
+      </div>
+      <div class="scale-item">
+        <div class="n">c</div>
+        <div>
+          <h4>Red de citas: descubrir investigadores nuevos</h4>
+          <p>Los autores que citan los papers del grupo ya quedan registrados en la base de datos — son candidatos naturales para ampliar la red de colaboración fuera del proyecto.</p>
+        </div>
+      </div>
+      <div class="scale-item">
+        <div class="n">d</div>
+        <div>
+          <h4>Mapa de calor de sinergias</h4>
+          <p>Matriz 90×90 que colorea de un vistazo qué pares de investigadores tienen mayor solapamiento temático y aún no han colaborado: las oportunidades perdidas se vuelven visibles.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 07 RAG / PDFs ================= -->
+  <section class="reveal">
+    <div class="sec-num">07 — ETAPA AVANZADA</div>
+    <h2>Lectura inteligente de papers: del PDF al conocimiento consultable</h2>
+    <p class="lead">
+      Una capa donde el investigador <strong>sube el PDF</strong> de un paper y una IA de comprensión
+      de documentos —muy superior al OCR clásico— extrae el texto, las <strong>ecuaciones en LaTeX</strong>
+      y las <strong>tablas</strong>. Todo se indexa en un sistema <strong>RAG</strong> para responder
+      preguntas sobre el contenido y afinar el grafo.
+    </p>
+
+    <div class="rag-flow">
+      <div class="rag-step">
+        <div class="rag-ic">⬆</div>
+        <h4>1 · Subida</h4>
+        <p>El usuario carga el PDF del paper (propio, interno o publicado).</p>
+      </div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-step">
+        <div class="rag-ic">⌘</div>
+        <h4>2 · Extracción IA</h4>
+        <p>Modelos como Docling / Nougat (local) o Mistral OCR / LlamaParse (API) devuelven texto, <span class="hl">LaTeX</span> y <span class="hl">tablas</span> estructuradas.</p>
+      </div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-step">
+        <div class="rag-ic">▦</div>
+        <h4>3 · Indexado RAG</h4>
+        <p>El contenido se trocea, se vectoriza y se guarda en la misma base de datos (sqlite-vec).</p>
+      </div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-step">
+        <div class="rag-ic">✦</div>
+        <h4>4 · Consulta</h4>
+        <p>Se pregunta en lenguaje natural y el sistema responde citando el fragmento exacto del paper.</p>
+      </div>
+    </div>
+
+    <div class="rag-benefits">
+      <div class="rag-ben">
+        <h4>Keywords de texto completo</h4>
+        <p>Hoy el piloto lee solo el abstract; con el PDF completo (métodos, ecuaciones) la detección de sinergias es mucho más precisa.</p>
+      </div>
+      <div class="rag-ben">
+        <h4>Respuestas, no solo nombres</h4>
+        <p>Más allá de "quién sabe de X", responde "qué método usaron en tal paper" con la cita textual.</p>
+      </div>
+      <div class="rag-ben">
+        <h4>Privacidad opcional</h4>
+        <p>El modo local procesa papers no publicados sin enviarlos a ninguna API externa.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 08 CTA ================= -->
+  <section class="reveal">
+    <div class="cta">
+      <div class="sec-num" style="color:var(--cyan)">08 — QUÉ SE NECESITA PARA PARTIR</div>
+      <h2>Solo la lista de perfiles</h2>
+      <p>
+        El piloto con dos investigadores valida la metodología completa. Para escalar, basta con
+        entregar los <strong style="color:var(--ink)">enlaces de Google Scholar</strong> (o nombres y afiliación)
+        de los investigadores del proyecto. Cada perfil agregado enriquece el grafo y mejora
+        la detección de comunidades.
+      </p>
+      <div class="req">
+        <span>scholar.google.com/citations?user=…</span>
+        <span>o nombre + universidad</span>
+        <span>o código ORCID</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>LCDA SEARCHER · PRUEBA DE CONCEPTO</span>
+    <span>GRAFOS DE CONOCIMIENTO + NLP · 2026</span>
+  </footer>
+
+</div>
+
+<script>
+/* ===== Grafo demo con datos reales de los perfiles ===== */
+(function () {
+  const C = {
+    inv: '#c4620a',
+    inv_border: '#e8843a',
+    kw: '#0077a8',
+    kw_border: '#3399cc',
+    paper: '#6b7f96',
+    paper_border: '#4e6070',
+    edge: 'rgba(90,110,130,0.3)',
+    edgeKw: 'rgba(0,119,168,0.35)'
+  };
+  const font = { color: '#1a1714', face: 'IBM Plex Sans', size: 13 };
+  const fontSmall = { color: '#4a5a6a', face: 'IBM Plex Sans', size: 10 };
+
+  // tamaño de paper ~ log(citas)
+  const pSize = c => 9 + Math.log10(Math.max(c, 2)) * 7;
+
+  const nodes = new vis.DataSet([
+    // Investigadores
+    { id: 'esp', label: 'José R. Espinoza\nU. de Concepción', shape: 'dot', size: 34, color: { background: C.inv, border: C.inv_border }, font: { ...font, size: 15, multi: true, bold: { color: '#1a1714', face: 'IBM Plex Sans', size: 15 } }, title: '12.900 citas · índice h 50 · 309 publicaciones' },
+    { id: 'tor', label: 'Miguel Torres\nU. de los Andes', shape: 'dot', size: 28, color: { background: C.inv, border: C.inv_border }, font: { ...font, size: 15, multi: true }, title: 'Electrónica de potencia · Máquina síncrona virtual · Generación distribuida' },
+
+    // Keywords compartidas (puentes)
+    { id: 'k1', label: 'Sincronización PLL', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+    { id: 'k2', label: 'Máquina síncrona virtual', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+    { id: 'k3', label: 'Integración fotovoltaica', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+    { id: 'k4', label: 'Control predictivo FCS-MPC', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+    { id: 'k5', label: 'Regulación de frecuencia', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+    { id: 'k6', label: 'Convertidores multinivel', shape: 'dot', size: 16, color: { background: C.kw, border: C.kw_border }, font: { ...font, color: '#ffffff' } },
+
+    // Papers reales en coautoría Espinoza–Torres
+    { id: 'p1', label: 'Robust PLL (2008)', shape: 'dot', size: pSize(156), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'A robust phase-locked loop algorithm to synchronize static-power converters with polluted AC systems — 156 citas' },
+    { id: 'p2', label: 'PV multinivel + VSG (2014)', shape: 'dot', size: pSize(27), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'Integration of a large-scale photovoltaic plant using a multilevel converter topology and virtual synchronous generator control — 27 citas' },
+    { id: 'p3', label: 'Self-Tuning VSM (2014)', shape: 'dot', size: pSize(440), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'Self-Tuning Virtual Synchronous Machine: A Control Strategy for Energy Storage Systems — 440 citas' },
+    { id: 'p4', label: 'MPC carga computacional (2020)', shape: 'dot', size: pSize(35), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'MPC Algorithm With Reduced Computational Burden ... Photovoltaic System — 35 citas' },
+    { id: 'p5', label: 'FCS-MPC estado del arte (2012)', shape: 'dot', size: pSize(2228), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'State of the art of finite control set model predictive control in power electronics — 2.228 citas' },
+    { id: 'p6', label: 'Grid PV ref. cells (2015)', shape: 'dot', size: pSize(14), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'Grid connected PV system with maximum power point estimation based on reference cells — 14 citas' },
+    { id: 'p7', label: 'VSG wind-diesel (2009)', shape: 'dot', size: pSize(120), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'Virtual synchronous generator control in autonomous wind-diesel power systems' },
+    { id: 'p8', label: 'HVDC + VSC (2004)', shape: 'dot', size: pSize(9), color: { background: C.paper, border: C.paper_border }, font: fontSmall, title: 'Modeling and control of a HVDC power transmission system based on active voltage source converters — coautoría directa' }
+  ]);
+
+  const edges = new vis.DataSet([
+    // autorías (sólidas)
+    { from: 'esp', to: 'p1', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p1', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p2', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p2', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p3', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p3', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p4', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p4', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p5', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p6', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p6', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p7', width: 2, color: { color: C.edge } },
+    { from: 'esp', to: 'p8', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'p8', width: 2, color: { color: C.edge } },
+
+    // papers → keywords (punteadas cian)
+    { from: 'p1', to: 'k1', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p2', to: 'k2', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p2', to: 'k3', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p2', to: 'k6', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p3', to: 'k2', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p3', to: 'k5', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p4', to: 'k4', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p4', to: 'k3', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p4', to: 'k6', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p5', to: 'k4', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p6', to: 'k3', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p7', to: 'k2', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p7', to: 'k5', dashes: [4,4], color: { color: C.edgeKw } },
+    { from: 'p1', to: 'k6', dashes: [4,4], color: { color: C.edgeKw } },
+
+    // investigadores → keywords directas (temas declarados/frecuentes)
+    { from: 'esp', to: 'k4', dashes: [2,6], color: { color: 'rgba(196,98,10,0.3)' } },
+    { from: 'tor', to: 'k2', dashes: [2,6], color: { color: 'rgba(196,98,10,0.3)' } },
+    { from: 'esp', to: 'k1', dashes: [2,6], color: { color: 'rgba(196,98,10,0.3)' } },
+    { from: 'tor', to: 'k5', dashes: [2,6], color: { color: 'rgba(196,98,10,0.3)' } }
+  ]);
+
+  const container = document.getElementById('grafo');
+  const network = new vis.Network(container, { nodes, edges }, {
+    physics: {
+      barnesHut: { gravitationalConstant: -5200, springLength: 130, springConstant: 0.025, damping: 0.22 },
+      stabilization: { iterations: 180 }
+    },
+    interaction: { hover: true, tooltipDelay: 120, zoomSpeed: 0.6 },
+    nodes: { borderWidth: 1.5, shadow: { enabled: true, color: 'rgba(0,0,0,0.15)', size: 10, x: 2, y: 2 } },
+    edges: { smooth: { type: 'continuous' } }
+  });
+  network.once('stabilizationIterationsDone', () => network.fit({ animation: { duration: 800 } }));
+})();
+
+/* ===== Reveal on scroll ===== */
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+</script>
+
+</body>
+</html>

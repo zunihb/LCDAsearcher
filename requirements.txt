@@ -1,0 +1,8 @@
+scholarly>=1.7.11
+openai>=1.0.0
+networkx>=3.0
+pyvis>=0.3.2
+plotly>=5.18.0
+requests>=2.31.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
