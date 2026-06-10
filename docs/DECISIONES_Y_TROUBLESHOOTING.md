@@ -278,3 +278,84 @@ build_search_context()
 - **TTL de 5 minutos**: suficiente para una sesión de chat, no stale por mucho tiempo
 - **Invalidación por firma de BD**: si se agregan papers/investigadores, la firma cambia y se recomputa
 - **Evidencia bajo demanda**: la versión rápida no computa evidencia (paper titles por par). Si el chat necesita evidencia, se puede llamar `_evidence_for_keyword` solo para los matches que se muestran al usuario (top 10-15, no 64K)
+
+---
+
+## Tool calling para el chat (2026-06-10)
+
+### Problema
+
+El chat enviaba **~5000 tokens** de contexto (todos los investigadores, keywords, papers, matches) en cada mensaje. El LLM tardaba **~60s** en procesar y generar respuesta.
+
+### Solución: Function calling
+
+En lugar de enviar todo el contexto, el LLM pide datos **bajo demanda** via tools:
+
+```
+Usuario: "¿quién trabaja en control predictivo?"
+
+Flujo:
+1. System prompt mínimo (~200 tokens) → LLM
+2. LLM llama a search_papers(query="predictive") + search_keywords(term="predictivo")
+3. Python ejecuta las queries SQL (~0.1s)
+4. Resultados van al LLM → genera respuesta enfocada
+```
+
+### Tools disponibles (`src/tools.py`)
+
+| Tool | Descripción |
+|------|-------------|
+| `get_current_date` | Fecha y hora actual |
+| `list_researchers` | Lista investigadores con métricas |
+| `get_researcher_profile` | Perfil detallado de un investigador |
+| `search_papers` | Busca papers por keyword/título |
+| `get_topic_matches` | Matches temáticos entre investigadores |
+| `search_keywords` | Busca keywords en la BD |
+| `get_db_stats` | Estadísticas generales de la BD |
+
+### Resultados
+
+| Escenario | Antes (contexto gigante) | Después (tools) |
+|-----------|-------------------------|-----------------|
+| Prompt tokens | ~5000 | ~200 |
+| Respuesta simple | ~60s | **~11s** |
+| Respuesta compleja | ~60s | **~15s** |
+| Primera llamada LLM | N/A | ~4-5s |
+| Ejecución tools | N/A | ~0.1s |
+| Segunda llamada LLM | N/A | ~7-10s |
+
+### Arquitectura
+
+```
+┌──────────────────────────────────────┐
+│ System prompt (~200 tokens)          │
+│ + Tools definitions (7 tools)        │
+│ + Mensaje usuario                    │
+│ + Historial reciente                 │
+└──────────────┬───────────────────────┘
+               │
+               ▼
+        ┌──────────────┐
+        │ LLM (1ra)    │ ← 4-5s
+        │ tool_calls?  │
+        └──────┬───────┘
+               │ SÍ
+               ▼
+        ┌──────────────┐
+        │ execute_tool │ ← 0.1s
+        │ (Python/SQL) │
+        └──────┬───────┘
+               │
+               ▼
+        ┌──────────────┐
+        │ LLM (2da)    │ ← 7-10s streaming
+        │ respuesta    │
+        └──────────────┘
+```
+
+### Ventajas sobre el approach anterior
+
+1. **Escalable**: no importa si hay 16 o 1000 investigadores, el prompt siempre es pequeño
+2. **Preciso**: el LLM pide exactamente los datos que necesita
+3. **Rápido**: 4-5x más rápido que enviar todo el contexto
+4. **Mantenible**: cada tool es una función Python independiente

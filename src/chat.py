@@ -1,7 +1,13 @@
-"""Chat interactivo para LCDA Searcher."""
+"""Chat interactivo para LCDA Searcher — con tool calling.
+
+En lugar de enviar todo el contexto al LLM, el modelo pide datos
+bajo demanda via function calls. Mucho más rápido y escalable.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import readline  # noqa: F401 — habilita historial de flechas en input()
 import sys
 from typing import Any
@@ -23,11 +29,22 @@ from src.cli_output import (
     _strip_inline_thinking,
 )
 from src.db import Database
-from src.matching import get_investigador_keyword_matrix, get_matches_investigadores
-from src.search import build_search_context, format_context_for_prompt, ask_llm, ask_llm_stream
+from src.tools import TOOLS, execute_tool
+
+SYSTEM_PROMPT = """Eres el asistente de LCDA Searcher, un sistema de mapeo de investigación en electrónica de potencia.
+
+Tienes acceso a una base de datos con investigadores, papers y keywords. Usa las tools disponibles para responder las preguntas del usuario.
+
+Reglas:
+- Responde en español, tono académico pero directo.
+- Cita papers como: "Título (Año, N citas)"
+- Si no tienes datos suficientes, di qué información falta.
+- Sé conciso. Usa bullets y tablas cuando corresponda.
+- No inventes datos que no estén en la base."""
 
 
 def _cmd_matches(db: Database) -> None:
+    from src.matching import get_matches_investigadores
     matches = get_matches_investigadores(db, limit=15)
     if not matches:
         print_info("No hay matches temáticos disponibles.")
@@ -47,6 +64,7 @@ def _cmd_perfil(db: Database, nombre_parcial: str) -> None:
         print_error(f"No encontré '{nombre_parcial}'. Investigadores: {nombres}")
         return
 
+    from src.matching import get_investigador_keyword_matrix
     sid = target["scholar_id"]
     matrix = get_investigador_keyword_matrix(db)
     inv_kws = sorted(
@@ -85,8 +103,48 @@ def _cmd_fuentes(db: Database) -> None:
     print_db_stats(stats[0])
 
 
+def _run_tool_loop(
+    client: OpenAI,
+    db: Database,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    max_rounds: int = 5,
+) -> str:
+    """Ejecuta el loop de tool calling hasta obtener respuesta final."""
+    for _ in range(max_rounds):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+            max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
+        )
+
+        msg = resp.choices[0].message
+        messages.append(msg)
+
+        # Si no hay tool calls, retornar respuesta final
+        if not msg.tool_calls:
+            return msg.content or "(sin respuesta)"
+
+        # Ejecutar cada tool call
+        for tc in msg.tool_calls:
+            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            result = execute_tool(db, tc.function.name, args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+    return "(demasiadas iteraciones de tools)"
+
+
 def run_chat(db: Database, client: OpenAI) -> None:
-    """Loop principal del chat interactivo."""
+    """Loop principal del chat con tool calling."""
+    model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
+
     print_welcome(
         "LCDA Searcher — Chat de Investigación",
         commands=[
@@ -101,13 +159,13 @@ def run_chat(db: Database, client: OpenAI) -> None:
             '"¿quién trabaja en control predictivo?"',
             '"compará a los investigadores en electrónica de potencia"',
             '"últimos papers de Espinoza"',
+            '"¿cuál es la fecha de hoy?"',
         ],
     )
 
     historial: list[dict[str, str]] = []
     max_history = 10
 
-    # Crear sesión de chat en la DB
     sesion_id = db.crear_sesion_chat(modo="chat")
 
     while True:
@@ -120,7 +178,6 @@ def run_chat(db: Database, client: OpenAI) -> None:
         if not user_input:
             continue
 
-        # Comandos especiales
         cmd = user_input.lower()
 
         if cmd == "/salir":
@@ -164,37 +221,71 @@ def run_chat(db: Database, client: OpenAI) -> None:
             print_info("Comandos: /matches, /perfil, /fuentes, /limpiar, /salir")
             continue
 
-        # Búsqueda y respuesta con streaming
+        # ── Tool calling loop ──
         try:
-            # Construir contexto
-            with Live(Spinner("dots", text=" [dim]Buscando...[/dim]"), console=console, transient=True):
-                context = build_search_context(db, user_input)
+            messages: list[dict[str, Any]] = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+            ]
 
-            # Streaming con spinner
-            trimmed = historial[-(max_history * 2):] if historial else None
+            # Historial reciente
+            trimmed = historial[-(max_history * 2):] if historial else []
+            for h in trimmed:
+                messages.append({"role": h["role"], "content": h["content"]})
+
+            messages.append({"role": "user", "content": user_input})
+
             renderer = StreamRenderer()
             renderer.start()
-            with Live(Spinner("dots", text=" [dim]Generando respuesta...[/dim]"), console=console, transient=True):
-                for chunk in ask_llm_stream(client, context, user_input, trimmed):
-                    renderer.add(chunk)
+            with Live(Spinner("dots", text=" [dim]Pensando...[/dim]"), console=console, transient=True):
+                # Primera llamada (puede retornar tool calls)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=TOOLS,
+                    temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+                    max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
+                )
+
+                msg = resp.choices[0].message
+                messages.append(msg)
+
+                if msg.tool_calls:
+                    # Ejecutar tools y obtener respuesta final
+                    for tc in msg.tool_calls:
+                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                        result = execute_tool(db, tc.function.name, args)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        })
+
+                    # Segunda llamada con resultados de tools (streaming)
+                    for chunk in client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=TOOLS,
+                        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+                        max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
+                        stream=True,
+                    ):
+                        delta = chunk.choices[0].delta if chunk.choices else None
+                        if delta and delta.content:
+                            renderer.add(delta.content)
+                else:
+                    # Respuesta directa sin tools
+                    if msg.content:
+                        renderer.add(msg.content)
+
             content = renderer.stop()
             content = _strip_inline_thinking(content)
+
         except Exception as e:
             print_error(str(e))
             continue
 
-        # Guardar en historial y en DB
         historial.append({"role": "user", "content": user_input})
         historial.append({"role": "assistant", "content": content})
 
-        # Persistir en DB
-        kw_found = context["keywords_encontradas"]
-        papers_found = len(context["papers_representativos"]) + len(context["papers_por_titulo"])
-        matches_found = len(context["matches_tematicos"])
         db.guardar_mensaje_chat(sesion_id, "user", user_input)
-        db.guardar_mensaje_chat(
-            sesion_id, "assistant", content,
-            keywords_detectadas=kw_found,
-            papers_encontrados=papers_found,
-            matches_relevantes=matches_found,
-        )
+        db.guardar_mensaje_chat(sesion_id, "assistant", content)
