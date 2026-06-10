@@ -1,11 +1,62 @@
 # Perfiles del piloto (Google Scholar user IDs)
 investigadores:
+  # --- Piloto original ---
   - scholar_id: Wk2naEgAAAAJ
     nombre: José R. Espinoza
     afiliacion: Universidad de Concepción
   - scholar_id: 6O2aO7IAAAAJ
     nombre: Miguel Torres
     afiliacion: Universidad de los Andes
+
+  # --- Expansión 2025-06-10: Red de coautores de Espinoza ---
+  # Top 10 por impacto citacional
+  - scholar_id: KZ5TMuAAAAAJ
+    nombre: Jose Rodriguez
+    afiliacion: Universidad San Sebastian
+  - scholar_id: wdTi3S0AAAAJ
+    nombre: Geza Joos
+    afiliacion: McGill University
+  - scholar_id: 8z38R2MAAAAJ
+    nombre: Pat Wheeler
+    afiliacion: University of Nottingham
+  - scholar_id: c1VhcpIAAAAJ
+    nombre: Marian P. Kazmierkowski
+    afiliacion: Warsaw University of Technology
+  - scholar_id: gggnQKsAAAAJ
+    nombre: Haitham Abu-Rub
+    afiliacion: Hamad Bin Khalifa University
+  - scholar_id: c9ql-BAAAAAJ
+    nombre: Marcelo A. Perez
+    afiliacion: Universidad Tecnica Federico Santa Maria
+  - scholar_id: U1_r_C4AAAAJ
+    nombre: Christian A. Rojas
+    afiliacion: Universidad Tecnica Federico Santa Maria
+  - scholar_id: FOKLmaQAAAAJ
+    nombre: Marco Rivera
+    afiliacion: University of Nottingham UK
+  - scholar_id: YwQuZr0AAAAJ
+    nombre: Javier Muñoz Vidal
+    afiliacion: Universidad de Talca
+  - scholar_id: nv4fvLcAAAAJ
+    nombre: Mariusz Malinowski
+    afiliacion: Warsaw University of Technology
+
+  # 5 de UdeC / colaboración cercana
+  - scholar_id: EwIjpU4AAAAJ
+    nombre: Luis Morán
+    afiliacion: Universidad de Concepción
+  - scholar_id: b1UsMiEAAAAJ
+    nombre: Daniel G. Sbarbaro-Hofer
+    afiliacion: Universidad de Concepción
+  - scholar_id: tRxVpaUAAAAJ
+    nombre: Miguel Figueroa
+    afiliacion: Universidad de Concepción
+  - scholar_id: _d9POm4AAAAJ
+    nombre: Claudio Molina Muñoz
+    afiliacion: Universidad de Concepción
+  - scholar_id: aa-NCokAAAAJ
+    nombre: Jaime Addin Rohten
+    afiliacion: Universidad del Bío-Bío
 
 # Extracción
 scholarly:
@@ -45,3 +96,9 @@ trends:
 # Salidas
 output_dir: output
 data_dir: data
+
+# LLM para chat y búsqueda semántica (MVP 2)
+llm:
+  model: mimo-v2.5-pro
+  temperature: 0.3
+  max_output_tokens: 2000

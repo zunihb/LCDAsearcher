@@ -11,12 +11,15 @@ import yaml
 from dotenv import load_dotenv
 
 from src.abstracts import run_abstracts
+from src.chat import run_chat
 from src.citations import run_citations
+from src.cli_output import console, print_error, print_response, print_sources
 from src.db import Database
 from src.extract import run_extract
 from src.graph import run_graph
 from src.keywords import run_keywords
 from src.report import run_report
+from src.search import get_llm_client, search_and_respond
 from src.trends import run_trends
 
 load_dotenv()
@@ -38,6 +41,10 @@ def main() -> int:
     parser.add_argument("--reprocess-keywords", action="store_true", help="Borrar keywords y reprocesar con LLM")
     parser.add_argument("--skip-trends", action="store_true", help="Omitir tendencias OpenAlex")
     parser.add_argument("--force-refresh", action="store_true", help="Re-scrapear Scholar (ignorar caché)")
+    parser.add_argument("--search", type=str, default=None, help="Búsqueda single-shot con LLM")
+    parser.add_argument("--chat", action="store_true", help="Modo chat interactivo con LLM (terminal)")
+    parser.add_argument("--tui", action="store_true", help="Modo TUI interactivo con Textual (visual)")
+    parser.add_argument("--history", action="store_true", help="Mostrar historial de chats guardados")
     args = parser.parse_args()
 
     cfg = load_config(Path(args.config))
@@ -48,6 +55,50 @@ def main() -> int:
 
     db = Database(db_path)
     db.init_schema()
+
+    # --- Historial de chats ---
+    if args.history:
+        stats = db.get_chat_stats()
+        sesiones = db.get_sesiones_chat(limit=10)
+        console.print(f"\n[bold bright_white]Historial de chats[/bold bright_white]")
+        console.print(f"Sesiones: [cyan]{stats.get('total_sesiones', 0)}[/cyan] | "
+                      f"Mensajes: [cyan]{stats.get('total_mensajes', 0)}[/cyan] | "
+                      f"Preguntas: [cyan]{stats.get('total_preguntas', 0)}[/cyan]\n")
+        for s in sesiones:
+            msgs = db.get_mensajes_sesion(s["id"])
+            console.print(f"[bold cyan]Sesion {s['id']}[/bold cyan] — {s['iniciada_en']} ({s['modo']}, {s['total_mensajes']} msgs)")
+            for m in msgs[:6]:
+                rol = "[bold green]U[/bold green]" if m["rol"] == "user" else "[bold yellow]A[/bold yellow]"
+                preview = (m["contenido"] or "")[:80].replace("\n", " ")
+                console.print(f"  {rol} {preview}")
+            if len(msgs) > 6:
+                console.print(f"  [dim]... +{len(msgs) - 6} mensajes mas[/dim]")
+            console.print()
+        return 0
+
+    # --- Modos de búsqueda / chat (no ejecutan el pipeline) ---
+    if args.search or args.chat or args.tui:
+        client = get_llm_client()
+        if not client:
+            print_error("No se encontró LLM_API_KEY en .env")
+            return 1
+        if args.search:
+            result = search_and_respond(db, client, args.search)
+            print_sources(
+                result["keywords_detectadas"],
+                result["papers_encontrados"],
+                result["matches_relevantes"],
+            )
+            print_response(result["respuesta"], result.get("reasoning"))
+            return 0
+        if args.tui:
+            from src.tui import LCDATui
+            app = LCDATui(db, client)
+            app.run()
+            return 0
+        if args.chat:
+            run_chat(db, client)
+            return 0
 
     investigadores = cfg["investigadores"]
     scholarly_cfg = cfg.get("scholarly", {})

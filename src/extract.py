@@ -193,20 +193,30 @@ def run_extract(
 ) -> dict[str, Any]:
     t0 = time.time()
     total_papers = 0
+    ok = 0
+    skipped = []
     for inv in investigadores:
-        profile = fetch_profile(
-            scholar_id=inv["scholar_id"],
-            nombre=inv["nombre"],
-            afiliacion=inv.get("afiliacion", ""),
-            raw_dir=raw_dir,
-            use_proxies=scholarly_cfg.get("use_proxies", False),
-            pause_min=scholarly_cfg.get("pause_min_sec", 2),
-            pause_max=scholarly_cfg.get("pause_max_sec", 5),
-            force_refresh=force_refresh,
-            fill_each_paper=scholarly_cfg.get("fill_each_paper", False),
-        )
-        total_papers += persist_profile(db, profile)
+        try:
+            profile = fetch_profile(
+                scholar_id=inv["scholar_id"],
+                nombre=inv["nombre"],
+                afiliacion=inv.get("afiliacion", ""),
+                raw_dir=raw_dir,
+                use_proxies=scholarly_cfg.get("use_proxies", False),
+                pause_min=scholarly_cfg.get("pause_min_sec", 2),
+                pause_max=scholarly_cfg.get("pause_max_sec", 5),
+                force_refresh=force_refresh,
+                fill_each_paper=scholarly_cfg.get("fill_each_paper", False),
+            )
+            total_papers += persist_profile(db, profile)
+            ok += 1
+        except Exception as e:
+            print(f"  [WARN] {inv['nombre']} ({inv['scholar_id']}): {e}")
+            skipped.append(inv["nombre"])
 
     dur = time.time() - t0
-    db.log_metrica("extract", dur, f"{len(investigadores)} investigadores, {total_papers} papers")
-    return {"investigadores": len(investigadores), "papers": total_papers, "duracion_seg": dur}
+    summary = f"{ok}/{len(investigadores)} investigadores, {total_papers} papers"
+    if skipped:
+        summary += f", {len(skipped)} omitidos: {', '.join(skipped)}"
+    db.log_metrica("extract", dur, summary)
+    return {"investigadores": ok, "papers": total_papers, "duracion_seg": dur, "skipped": skipped}

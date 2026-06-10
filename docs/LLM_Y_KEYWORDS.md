@@ -1,4 +1,4 @@
-# LLM, JSON estructurado y keywords
+# LLM, JSON estructurado, chat y keywords
 
 ## Modelo recomendado (OpenCode Go)
 
@@ -21,17 +21,25 @@ Límites OpenCode Go: ver [documentación oficial](https://opencode.ai/docs/go/)
 
 ## JSON nativo (`response_format`)
 
-El pipeline **no parsea texto libre** si el modelo lo soporta. Usa:
+El pipeline **no parsea texto libre** si el modelo lo soporta. Tanto el chat como la extracción de keywords usan:
 
 1. **`json_schema` (strict)** — preferido
 2. **`json_object`** — fallback
 3. Parser legacy — solo si ambos fallan
 
-Schema obligatorio:
+Schema obligatorio para keywords:
 
 ```json
 {"keywords": ["kw1", "kw2", "... hasta 15"]}
 ```
+
+Schema obligatorio para el chat:
+
+```json
+{"answer": "respuesta final en markdown"}
+```
+
+El razonamiento interno no se renderiza ni se guarda como respuesta. Si el proveedor lo envía en un campo separado (`reasoning` o `reasoning_content`), se conserva separado del contenido final.
 
 Config:
 

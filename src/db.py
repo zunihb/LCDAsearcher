@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS pipeline_metricas (
     detalle TEXT,
     ejecutado_en TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS chat_sesiones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    iniciada_en TEXT DEFAULT (datetime('now')),
+    modo TEXT DEFAULT 'chat',
+    total_mensajes INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS chat_mensajes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sesion_id INTEGER NOT NULL,
+    rol TEXT NOT NULL,
+    contenido TEXT NOT NULL,
+    keywords_detectadas TEXT,
+    papers_encontrados INTEGER DEFAULT 0,
+    matches_relevantes INTEGER DEFAULT 0,
+    creado_en TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (sesion_id) REFERENCES chat_sesiones(id)
+);
 """
 
 
@@ -499,3 +518,79 @@ class Database:
     def get_metricas_totales(self) -> float:
         row = self.query_one("SELECT SUM(duracion_seg) AS total FROM pipeline_metricas")
         return row["total"] or 0.0 if row else 0.0
+
+    # ─── Chat persistence ───────────────────────────────────────────────────
+
+    def crear_sesion_chat(self, modo: str = "chat") -> int:
+        """Crea una nueva sesión de chat y retorna su ID."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO chat_sesiones (modo) VALUES (?)",
+                (modo,),
+            )
+            return cur.lastrowid
+
+    def guardar_mensaje_chat(
+        self,
+        sesion_id: int,
+        rol: str,
+        contenido: str,
+        keywords_detectadas: list[str] | None = None,
+        papers_encontrados: int = 0,
+        matches_relevantes: int = 0,
+    ) -> None:
+        """Guarda un mensaje de chat en la DB."""
+        import json
+        kw_json = json.dumps(keywords_detectadas, ensure_ascii=False) if keywords_detectadas else None
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_mensajes
+                    (sesion_id, rol, contenido, keywords_detectadas, papers_encontrados, matches_relevantes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (sesion_id, rol, contenido, kw_json, papers_encontrados, matches_relevantes),
+            )
+            conn.execute(
+                "UPDATE chat_sesiones SET total_mensajes = total_mensajes + 1 WHERE id = ?",
+                (sesion_id,),
+            )
+
+    def get_sesiones_chat(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Lista sesiones de chat recientes."""
+        return self.query(
+            "SELECT * FROM chat_sesiones ORDER BY iniciada_en DESC LIMIT ?",
+            (limit,),
+        )
+
+    def get_mensajes_sesion(self, sesion_id: int) -> list[dict[str, Any]]:
+        """Obtiene todos los mensajes de una sesión."""
+        return self.query(
+            "SELECT * FROM chat_mensajes WHERE sesion_id = ? ORDER BY creado_en",
+            (sesion_id,),
+        )
+
+    def get_chat_stats(self) -> dict[str, Any]:
+        """Estadísticas generales del chat."""
+        row = self.query_one("""
+            SELECT
+                (SELECT COUNT(*) FROM chat_sesiones) AS total_sesiones,
+                (SELECT COUNT(*) FROM chat_mensajes) AS total_mensajes,
+                (SELECT COUNT(*) FROM chat_mensajes WHERE rol = 'user') AS total_preguntas,
+                (SELECT COUNT(*) FROM chat_mensajes WHERE rol = 'assistant') AS total_respuestas
+        """)
+        return row or {}
+
+    def get_preguntas_frecuentes(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Preguntas más frecuentes de los chats."""
+        return self.query(
+            """
+            SELECT contenido, COUNT(*) AS frecuencia
+            FROM chat_mensajes
+            WHERE rol = 'user'
+            GROUP BY contenido
+            ORDER BY frecuencia DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )

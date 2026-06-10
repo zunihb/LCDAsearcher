@@ -35,13 +35,35 @@ def test_model(client: OpenAI, model: str) -> bool:
     try:
         r = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": "Responde solo: OK"}],
-            max_tokens=10,
+            messages=[
+                {
+                    "role": "system",
+                    "content": 'Responde solo JSON con esta forma: {"answer": "OK"}.',
+                },
+                {"role": "user", "content": "Prueba de salida estructurada."},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "llm_smoke_test",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            max_tokens=60,
             temperature=0,
         )
         text = (r.choices[0].message.content or "").strip()
         if not text:
             print(f"  ✗ {model}: respuesta VACÍA (no usar para keywords)")
+            return False
+        if "answer" not in text:
+            print(f"  ✗ {model}: no respetó salida estructurada: {text[:80]}")
             return False
         print(f"  ✓ {model}: {text[:80]}")
         return True

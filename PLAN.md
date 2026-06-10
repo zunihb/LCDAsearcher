@@ -58,7 +58,52 @@ Ver [`docs/LLM_Y_KEYWORDS.md`](docs/LLM_Y_KEYWORDS.md).
 - Extracción masiva citantes
 - Interfaz web (Next.js)
 
-## 8. Métrica de venta
+## 8. Expansión de red de coautores (2026-06-10)
+
+### Objetivo
+Escalar de 2 investigadores piloto a 17, incorporando la red de coautores directos de José R. Espinoza para enriquecer el MVP y demostrar la escalabilidad del pipeline.
+
+### Criterios de selección (15 nuevos investigadores)
+
+**Top 10 por impacto citacional** (papers más citados de Espinoza):
+
+| # | Nombre | Afiliación | Scholar ID |
+|---|--------|-----------|------------|
+| 1 | Jose Rodriguez | Universidad San Sebastian | KZ5TMuAAAAAJ |
+| 2 | Geza Joos | McGill University | wdTi3S0AAAAJ |
+| 3 | Pat Wheeler | University of Nottingham | 8z38R2MAAAAJ |
+| 4 | Marian P. Kazmierkowski | Warsaw University of Technology | c1VhcpIAAAAJ |
+| 5 | Haitham Abu-Rub | Hamad Bin Khalifa University | gggnQKsAAAAJ |
+| 6 | Marcelo A. Perez | UTFSM | c9ql-BAAAAAJ |
+| 7 | Christian A. Rojas | UTFSM | U1_r_C4AAAAJ |
+| 8 | Marco Rivera | University of Nottingham UK | FOKLmaQAAAAJ |
+| 9 | Javier Muñoz Vidal | Universidad de Talca | YwQuZr0AAAAJ |
+| 10 | Mariusz Malinowski | Warsaw University of Technology | nv4fvLcAAAAJ |
+
+**5 de UdeC/colaboración cercana**:
+
+| # | Nombre | Afiliación | Scholar ID |
+|---|--------|-----------|------------|
+| 11 | Luis Morán | UdeC | EwIjpU4AAAAJ |
+| 12 | Daniel G. Sbarbaro-Hofer | UdeC | b1UsMiEAAAAJ |
+| 13 | Miguel Figueroa | UdeC | tRxVpaUAAAAJ |
+| 14 | Claudio Molina Muñoz | UdeC (egresado) | _d9POm4AAAAJ |
+| 15 | Jaime Addin Rohten | UBB (colaborador cercano UdeC) | aa-NCokAAAAJ |
+
+### Impacto esperado
+
+| Métrica | Antes | Después (estimado) |
+|---------|-------|-------------------|
+| Investigadores | 2 | 17 |
+| Papers únicos | 353 | ~2,000-3,000 |
+| Autorias | 360 | ~3,000-5,000 |
+| Red de coautores | 55 | ~200+ |
+
+### Riesgos
+- Rate limiting Scholar: ~1-2h en extract.py
+- Posibles bloqueos tras ~100-200 requests
+
+## 9. Métrica de venta
 
 > "Hacer esto a mano tomaría ~4 h por investigador. Con el pipeline, toma minutos."
 

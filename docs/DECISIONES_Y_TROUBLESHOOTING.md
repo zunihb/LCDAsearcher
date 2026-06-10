@@ -179,3 +179,102 @@ python main.py --skip-extract --skip-citations --reprocess-keywords
 > Hacer el mapeo manual tomaría ~4 h por investigador. Con el pipeline, minutos.
 
 Se reporta en `output/reporte.md`.
+
+---
+
+## Optimización de rendimiento del chat (2026-06-10)
+
+### Problema
+
+Con 16 investigadores y 6,609 papers, cada mensaje del chat tardaba **~60 segundos** en responder.
+
+### Causa raíz
+
+`get_matches_investigadores()` se ejecutaba en **cada mensaje** del usuario. Este flujo:
+
+1. Consulta una matriz investigador-keyword de **69,426 filas** (5-table JOIN)
+2. Genera **64,169 combinaciones** de pares de investigadores
+3. Para **cada par**, ejecuta 2 queries de evidencia (`_evidence_for_keyword`)
+4. Total: **~128,000 queries SQL** por mensaje
+
+### Solución
+
+#### 1. Caché de matches en memoria (`src/search.py`)
+
+```python
+_matches_cache = {"sig": None, "matches": None, "ts": 0}
+
+def _get_cached_matches(db, ttl=300):
+    # Firma de BD: counts de tablas clave
+    sig = _db_signature(db)  # "16:6609:99491"
+    
+    # Si la firma no cambió y el TTL no expiró, retornar caché
+    if cache["sig"] == sig and (now - cache["ts"]) < ttl:
+        return cache["matches"]
+    
+    # Solo si la BD cambió, recompute
+    matches = get_matches_investigadores_fast(db, limit=30)
+    cache.update(sig=sig, matches=matches, ts=now)
+    return matches
+```
+
+**Firma de BD**: `(COUNT investigadores, COUNT papers, COUNT paper_keywords)`. Si estos números no cambian, los matches son los mismos.
+
+#### 2. Versión rápida sin evidencia (`get_matches_investigadores_fast`)
+
+La versión original computaba `_evidence_for_keyword()` para cada par (2 queries SQL × 64K pares). La versión rápida:
+
+- Calcula score por pares (en Python, sin SQL extra)
+- **No ejecuta queries de evidencia** (se puede pedir bajo demanda)
+- Reduce de ~128K queries a **0 queries extra**
+
+#### 3. Índices SQLite
+
+```sql
+CREATE INDEX idx_keywords_termino ON keywords(termino);
+CREATE INDEX idx_keywords_termino_canonico ON keywords(termino_canonico);
+CREATE INDEX idx_papers_titulo ON papers(titulo);
+CREATE INDEX idx_autorias_scholar_id ON autorias(scholar_id);
+CREATE INDEX idx_autorias_paper_id ON autorias(paper_id);
+CREATE INDEX idx_paper_keywords_paper_id ON paper_keywords(paper_id);
+CREATE INDEX idx_paper_keywords_keyword_id ON paper_keywords(keyword_id);
+CREATE INDEX idx_paper_autores_paper_id ON paper_autores(paper_id);
+CREATE INDEX idx_coautores_scholar_id ON coautores(scholar_id);
+CREATE INDEX idx_citas_investigador_id ON citas(investigador_id);
+```
+
+### Resultados
+
+| Escenario | Antes | Después | Mejora |
+|-----------|-------|---------|--------|
+| 1er mensaje (sin caché) | ~60s | 0.64s | **94x** |
+| Mensajes siguientes (caché) | ~60s | 0.07s | **857x** |
+
+### Arquitectura del caché
+
+```
+Mensaje usuario
+    │
+    ▼
+build_search_context()
+    │
+    ├── _get_cached_matches()
+    │       │
+    │       ├── _db_signature() → "16:6609:99491"
+    │       │
+    │       ├── firma == caché && TTL < 5min?
+    │       │   ├── SÍ → return caché (0.07ms)
+    │       │   └── NO → get_matches_fast() → guardar → return
+    │       │
+    │       └── matches (sin evidencia, solo scores)
+    │
+    ├── filtrar relevantes por tokens del query
+    ├── si < 5 relevantes → rellenar con top matches
+    └── return contexto para LLM
+```
+
+### Decisiones de diseño
+
+- **TTL de 5 minutos**: suficiente para una sesión de chat, no stale por mucho tiempo
+- **Invalidación por firma de BD**: si se agregan papers/investigadores, la firma cambia y se recomputa
+- **Evidencia bajo demanda**: la versión rápida no computa evidencia (paper titles por par). Si el chat necesita evidencia, se puede llamar `_evidence_for_keyword` solo para los matches que se muestran al usuario (top 10-15, no 64K)
