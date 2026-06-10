@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LCDA Searcher — MVP de Mapeo de Investigación</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f3ef;
+    --bg-soft: #eceae5;
+    --panel: #ffffff;
+    --panel-edge: #ddd9d2;
+    --ink: #1a1714;
+    --ink-dim: #5a524a;
+    --ink-faint: #9e9488;
+    --cyan: #0077a8;
+    --cyan-soft: rgba(0, 119, 168, 0.08);
+    --amber: #c4620a;
+    --amber-soft: rgba(196, 98, 10, 0.08);
+    --green: #1a7a4a;
+    --green-soft: rgba(26, 122, 74, 0.08);
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --display: 'Fraunces', serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.65;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(0,119,168,0.13) 1px, transparent 1px);
+    background-size: 34px 34px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+  header { min-height: 92vh; display: flex; flex-direction: column; justify-content: center; position: relative; }
+  .kicker { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.25em; text-transform: uppercase; color: var(--cyan); margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }
+  .kicker::before { content: ''; width: 40px; height: 1px; background: var(--cyan); }
+  h1 { font-family: var(--display); font-weight: 300; font-size: clamp(2.6rem, 6vw, 4.7rem); line-height: 1.08; letter-spacing: -0.01em; max-width: 900px; }
+  h1 em { font-style: italic; font-weight: 600; color: var(--cyan); }
+  h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.8rem, 3.4vw, 2.6rem); line-height: 1.15; margin-bottom: 22px; max-width: 760px; }
+  h3 { font-weight: 600; }
+  .hero-sub { margin-top: 28px; font-size: 1.15rem; color: var(--ink-dim); max-width: 720px; }
+  .hero-meta { margin-top: 48px; display: flex; gap: 36px; flex-wrap: wrap; font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint); }
+  .hero-meta b { color: var(--ink); font-weight: 500; display: block; font-size: 0.95rem; }
+  .scroll-hint { position: absolute; bottom: 36px; left: 32px; font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint); letter-spacing: 0.15em; animation: bob 2.4s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(6px); } }
+  section { padding: 90px 0; }
+  .sec-num { font-family: var(--mono); font-size: 0.78rem; color: var(--amber); letter-spacing: 0.2em; margin-bottom: 14px; }
+  .lead { font-size: 1.08rem; color: var(--ink-dim); max-width: 760px; margin-bottom: 40px; }
+  .lead strong, p strong { color: var(--ink); font-weight: 500; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 14px; padding: 28px 26px; transition: border-color 0.3s, transform 0.3s; }
+  .card:hover { border-color: rgba(0,119,168,0.45); transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.07); }
+  .card .icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; margin-bottom: 18px; background: var(--cyan-soft); border: 1px solid rgba(0,119,168,0.15); }
+  .card h3 { font-size: 1.04rem; margin-bottom: 8px; }
+  .card p { font-size: 0.92rem; color: var(--ink-dim); }
+  .tag { display: inline-block; margin-top: 14px; font-family: var(--mono); font-size: 0.7rem; color: var(--cyan); border: 1px solid rgba(0,119,168,0.3); border-radius: 99px; padding: 3px 10px; background: var(--cyan-soft); }
+  .tag.amber { color: var(--amber); border-color: rgba(196,98,10,0.3); background: var(--amber-soft); }
+  .tag.green { color: var(--green); border-color: rgba(26,122,74,0.3); background: var(--green-soft); }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px; }
+  .metric { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 14px; padding: 30px 26px; }
+  .metric .big { font-family: var(--display); font-size: 2.5rem; font-weight: 600; line-height: 1; color: var(--cyan); }
+  .metric .big.amber { color: var(--amber); }
+  .metric .big.green { color: var(--green); }
+  .metric .lbl { margin-top: 10px; font-size: 0.88rem; color: var(--ink-dim); }
+  .pipeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; counter-reset: step; }
+  .step { background: var(--bg-soft); border: 1px solid var(--panel-edge); border-radius: 12px; padding: 24px 22px; position: relative; }
+  .step::before { counter-increment: step; content: '0' counter(step); font-family: var(--mono); font-size: 0.75rem; color: var(--amber); letter-spacing: 0.1em; }
+  .step h4 { font-weight: 600; font-size: 0.98rem; margin: 10px 0 6px; }
+  .step p { font-size: 0.86rem; color: var(--ink-dim); }
+  .step code { font-family: var(--mono); font-size: 0.76rem; color: var(--green); background: var(--green-soft); padding: 1px 6px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--bg-soft); border: 1px solid var(--panel-edge); border-radius: 14px; overflow: hidden; font-size: 0.92rem; }
+  thead th { font-family: var(--mono); font-size: 0.72rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); text-align: left; padding: 16px 20px; border-bottom: 1px solid var(--panel-edge); background: var(--bg-soft); }
+  tbody td { padding: 14px 20px; border-bottom: 1px solid var(--panel-edge); color: var(--ink-dim); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(0,119,168,0.04); }
+  td.kw { color: var(--ink); font-weight: 500; }
+  .pill { display: inline-block; font-family: var(--mono); font-size: 0.72rem; padding: 2px 10px; border-radius: 99px; white-space: nowrap; }
+  .pill.alta { background: rgba(26,122,74,0.1); color: var(--green); border: 1px solid rgba(26,122,74,0.25); }
+  .pill.media { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(196,98,10,0.25); }
+  .pill.base { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(0,119,168,0.25); }
+  .graph-shell { background: var(--bg-soft); border: 1px solid var(--panel-edge); border-radius: 18px; overflow: hidden; position: relative; }
+  .graph-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 22px; border-bottom: 1px solid var(--panel-edge); background: var(--panel); }
+  .graph-toolbar .title { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-dim); letter-spacing: 0.08em; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink-dim); }
+  .legend span { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  #grafo { width: 100%; height: 520px; }
+  .graph-caption { padding: 14px 22px; border-top: 1px solid var(--panel-edge); font-size: 0.82rem; color: var(--ink-faint); font-family: var(--mono); }
+  .graph-caption b { color: var(--cyan); font-weight: 500; }
+  .quote { background: linear-gradient(135deg, rgba(0,119,168,0.06), rgba(196,98,10,0.05)); border: 1px solid rgba(0,119,168,0.2); border-radius: 18px; padding: 38px 40px; }
+  .quote p { color: var(--ink-dim); font-size: 1.02rem; max-width: 780px; }
+  .quote strong { color: var(--ink); }
+  .roadmap { display: grid; gap: 14px; }
+  .roadmap-item { display: grid; grid-template-columns: 52px 1fr; gap: 18px; background: var(--bg-soft); border: 1px solid var(--panel-edge); border-left: 3px solid var(--cyan); border-radius: 12px; padding: 22px 24px; align-items: start; }
+  .roadmap-item .n { font-family: var(--display); font-style: italic; font-size: 1.7rem; color: var(--cyan); opacity: 0.85; }
+  .roadmap-item h4 { font-weight: 600; font-size: 1rem; margin-bottom: 5px; }
+  .roadmap-item p { font-size: 0.9rem; color: var(--ink-dim); }
+  footer { padding: 50px 0 60px; border-top: 1px solid var(--panel-edge); font-family: var(--mono); font-size: 0.75rem; color: var(--ink-faint); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; background: var(--bg); }
+  .reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (max-width: 720px) { #grafo { height: 430px; } .roadmap-item { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">LCDA Searcher · MVP para decisión</div>
+    <h1>Del perfil público al <em>mapa de investigación</em> del departamento</h1>
+    <p class="hero-sub">
+      Piloto para mostrarle al profesor qué se puede obtener hoy: líneas de investigación por persona,
+      cruces temáticos, evidencia por paper y una ruta clara hacia buscador semántico y lectura de PDFs.
+    </p>
+    <div class="hero-meta">
+      <div><b>Piloto base</b>J. Espinoza × M. Torres</div>
+      <div><b>IA actual</b>MIMO v2.5 Pro · 15 keywords/paper</div>
+      <div><b>Corpus futuro</b>293 PDFs IEEE ya descargados</div>
+      <div><b>Escala objetivo</b>80–90 investigadores</div>
+    </div>
+    <div class="scroll-hint">▼ DESPLAZAR</div>
+  </header>
+
+  <section class="reveal">
+    <div class="sec-num">01 — DOLOR REAL</div>
+    <h2>El problema no es encontrar papers: es cruzar investigadores sin leerlos a mano</h2>
+    <p class="lead">
+      La información existe en Google Scholar, ORCID, OpenAlex e IEEE, pero está dispersa. El profesor necesita
+      responder rápido: <strong>quién investiga qué</strong>, <strong>quién se cruza con quién</strong> y
+      <strong>qué evidencia sostiene ese match</strong>. Con 90 investigadores, la revisión manual se transforma
+      en miles de pares posibles.
+    </p>
+    <div class="grid3">
+      <div class="card"><div class="icon">1</div><h3>Muchos perfiles</h3><p>Cada investigador tiene decenas o cientos de publicaciones, años, coautores, citas y líneas que cambian.</p><span class="tag">problema de escala</span></div>
+      <div class="card"><div class="icon">2</div><h3>Temas no normalizados</h3><p>Un mismo concepto aparece como FCS-MPC, predictive control, control predictivo o model predictive control.</p><span class="tag amber">problema semántico</span></div>
+      <div class="card"><div class="icon">3</div><h3>Decisión institucional</h3><p>El piloto debe servir para “caer con peso arriba”: mostrar algo concreto, mantenible y escalable.</p><span class="tag green">problema de evidencia</span></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">02 — QUÉ TENEMOS HOY</div>
+    <h2>Base suficiente para mostrar valor sin esperar al RAG completo</h2>
+    <p class="lead">
+      El primer resultado no necesita leer todos los PDFs. Con títulos, abstracts, autores, años, citas, DOI
+      y keywords ya se puede construir un mapa de investigación defendible. Los PDFs entran después como capa de profundidad.
+    </p>
+    <div class="metric-grid">
+      <div class="metric"><div class="big">2</div><div class="lbl">investigadores del piloto para validar con conocimiento experto del profesor</div></div>
+      <div class="metric"><div class="big amber">15</div><div class="lbl">keywords por paper generadas con MIMO v2.5 Pro y salida JSON estructurada</div></div>
+      <div class="metric"><div class="big green">293</div><div class="lbl">PDFs IEEE descargados para una segunda etapa de lectura profunda</div></div>
+      <div class="metric"><div class="big">90</div><div class="lbl">investigadores objetivo: matriz temática y mapa de calor de sinergias</div></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">03 — MVP 1</div>
+    <h2>Mapa de investigación por abstracts</h2>
+    <p class="lead">
+      Este es el MVP que responde directamente al pedido inicial: tomar perfiles públicos y generar un cruce mantenible
+      de temas. La salida principal es una <strong>matriz investigador–keyword</strong> con evidencia por paper.
+    </p>
+    <div class="pipeline">
+      <div class="step"><h4>Perfil público</h4><p>Scholar ID, ORCID o nombre + afiliación. El objetivo es que actualizar sea editar una lista.</p></div>
+      <div class="step"><h4>Metadata</h4><p>Google Scholar aporta publicaciones y citas; OpenAlex completa abstract, DOI, autores y venue.</p></div>
+      <div class="step"><h4>Keywords IA</h4><p>MIMO v2.5 Pro extrae <code>15 keywords</code> por paper en formato JSON controlado.</p></div>
+      <div class="step"><h4>Normalización</h4><p>Se agrupan variantes: “MPC”, “FCS-MPC” y “control predictivo” se vuelven comparables.</p></div>
+      <div class="step"><h4>Matching</h4><p>Se calcula investigador ↔ tema ↔ investigador, incluso si no existe coautoría previa.</p></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">04 — DEMO CONCEPTUAL</div>
+    <h2>El grafo no desaparece: se vuelve una vista del mapa semántico</h2>
+    <p class="lead">
+      El grafo sirve para explorar, pero el corazón del MVP es la matriz temática. Desde la misma base se pueden
+      generar tablas, rankings, mapas de calor, buscador semántico y reportes ejecutivos.
+    </p>
+    <div class="graph-shell">
+      <div class="graph-toolbar">
+        <span class="title">vista_mvp.html — datos → temas → decisiones</span>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--amber)"></span>Investigador</span>
+          <span><span class="dot" style="background:var(--cyan)"></span>Keyword</span>
+          <span><span class="dot" style="background:var(--green)"></span>Buscador</span>
+          <span><span class="dot" style="background:#6b7f96"></span>PDF</span>
+        </div>
+      </div>
+      <div id="grafo"></div>
+      <div class="graph-caption">La red muestra el flujo: <b>perfil público → abstract → keywords → match → búsqueda</b>. El PDF se agrega como evidencia profunda, no como requisito inicial.</div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">05 — MVP 2</div>
+    <h2>Buscador semántico sin RAG: útil desde la base actual</h2>
+    <p class="lead">
+      Antes de hacer RAG, ya se puede implementar un buscador sobre títulos, abstracts, keywords, autores, años y citas.
+      Esto permite que alguien escriba una necesidad y reciba investigadores, papers y justificación.
+    </p>
+    <table>
+      <thead><tr><th>Pregunta posible</th><th>Qué devuelve</th><th>Valor para el profesor</th></tr></thead>
+      <tbody>
+        <tr><td class="kw">¿Quién trabaja en control predictivo aplicado a convertidores?</td><td>Investigadores rankeados, keywords conectadas, papers más citados y papers recientes.</td><td><span class="pill alta">expert finder</span></td></tr>
+        <tr><td class="kw">¿Qué temas cruzan a Espinoza y Torres?</td><td>Tabla de keywords compartidas, conteo por investigador, años activos y evidencia por paper.</td><td><span class="pill alta">match temático</span></td></tr>
+        <tr><td class="kw">¿Qué líneas recientes hay entre 2021 y 2026?</td><td>Temas activos, papers nuevos y potencial de colaboración por recencia.</td><td><span class="pill media">agenda estratégica</span></td></tr>
+        <tr><td class="kw">¿Dónde hay oportunidades no cubiertas?</td><td>Comparación entre frecuencia interna y tendencia global de OpenAlex.</td><td><span class="pill base">priorización</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">06 — MVP 3</div>
+    <h2>PDFs + Mistral OCR: fase de profundidad, no bloqueo del piloto</h2>
+    <p class="lead">
+      Los PDFs permiten pasar del resumen al contenido técnico: métodos, ecuaciones, tablas, figuras y fragmentos citables.
+      La estrategia recomendada es procesar primero los papers más útiles: top citados, recientes y los que justifican matches fuertes.
+    </p>
+    <div class="grid3">
+      <div class="card"><div class="icon">PDF</div><h3>Entrada</h3><p>PDFs IEEE descargados localmente; no se comparten credenciales ni cookies institucionales.</p><span class="tag">data/pdfs/&lt;paper_id&gt;.pdf</span></div>
+      <div class="card"><div class="icon">OCR</div><h3>Mistral OCR</h3><p>Convierte cada PDF a texto/Markdown por página, preservando estructura útil para extracción posterior.</p><span class="tag amber">mistral-ocr-latest</span></div>
+      <div class="card"><div class="icon">RAG</div><h3>Indexación futura</h3><p>Se trocea el Markdown, se vectoriza y se responde citando fragmentos exactos del paper.</p><span class="tag green">fase avanzada</span></div>
+    </div>
+    <table style="margin-top:24px">
+      <thead><tr><th>Concepto</th><th>Costo público de referencia</th><th>Uso recomendado</th></tr></thead>
+      <tbody>
+        <tr><td class="kw">OCR 3</td><td>US$2 / 1.000 páginas</td><td>Parsear PDF a contenido consultable por página.</td></tr>
+        <tr><td class="kw">Annotations</td><td>US$3 / 1.000 páginas</td><td>Extracción estructurada adicional cuando se requiera metadata más fina.</td></tr>
+        <tr><td class="kw">Estrategia LCDA</td><td>Procesamiento selectivo</td><td>Priorizar papers que expliquen matches o líneas recientes.</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:14px; font-size:0.82rem; color:var(--ink-faint); font-family:var(--mono)">
+      Nota: precios de referencia consultados en pricing público de Mistral; revisar antes de presupuesto formal.
+    </p>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">07 — ENTREGABLE PARA EL PROFESOR</div>
+    <h2>Qué se mostraría en el piloto de dos personas</h2>
+    <div class="grid2">
+      <div class="card"><div class="icon">A</div><h3>Ficha por investigador</h3><p>Resumen de líneas, top keywords, años activos, papers representativos y evolución temporal.</p></div>
+      <div class="card"><div class="icon">B</div><h3>Tabla de matches</h3><p>Keyword compartida, papers por investigador, citas, último año y evidencia de por qué existe el cruce.</p></div>
+      <div class="card"><div class="icon">C</div><h3>Buscador de ejemplos</h3><p>Consultas tipo “quién trabaja en X” con resultados rankeados y papers que justifican cada respuesta.</p></div>
+      <div class="card"><div class="icon">D</div><h3>Ruta de escalamiento</h3><p>Cómo pasar de 2 perfiles a 90: matriz, mapa de calor, clustering y actualización recurrente.</p></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-num">08 — ESCALAMIENTO</div>
+    <h2>De piloto a sistema para 80–90 investigadores</h2>
+    <div class="roadmap">
+      <div class="roadmap-item"><div class="n">1</div><div><h4>Lista inicial de perfiles</h4><p>Scholar ID, ORCID o nombre+afiliación. Mientras más identificadores, menor revisión manual.</p></div></div>
+      <div class="roadmap-item"><div class="n">2</div><div><h4>Base única actualizable</h4><p>SQLite conserva papers, abstracts, DOI, autores, keywords, métricas y rutas PDF. La salida se regenera cuando cambien perfiles.</p></div></div>
+      <div class="roadmap-item"><div class="n">3</div><div><h4>Matriz 90 × temas</h4><p>Permite detectar comunidades, solapamientos, vacíos, fortalezas y pares con potencial de colaboración.</p></div></div>
+      <div class="roadmap-item"><div class="n">4</div><div><h4>Buscador interno de expertos</h4><p>Interfaz futura donde se escribe una necesidad y el sistema responde con investigadores, papers y evidencia.</p></div></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <div class="quote">
+      <div class="sec-num" style="color:var(--cyan)">09 — MENSAJE EJECUTIVO</div>
+      <h2>La propuesta para presentar</h2>
+      <p>
+        <strong>“Profesor, el piloto demuestra que sí se puede automatizar el cruce temático entre investigadores.</strong>
+        Primero usamos información pública y abstracts para construir una matriz investigador–tema; luego generamos matches,
+        evidencia por paper y un buscador semántico básico. Los PDFs completos con Mistral OCR quedan como fase de profundidad,
+        para pasar de ‘quién trabaja en qué’ a ‘qué método usó y dónde está en el paper’.”
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <span>LCDA SEARCHER · MVP PROFESOR</span>
+    <span>ABSTRACTS + MATCHING + BUSCADOR SEMÁNTICO · 2026</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const C = {
+    inv: '#c4620a', invBorder: '#e8843a',
+    kw: '#0077a8', kwBorder: '#3399cc',
+    tool: '#1a7a4a', toolBorder: '#3ea86d',
+    paper: '#6b7f96', paperBorder: '#4e6070',
+    edge: 'rgba(90,110,130,0.32)', edgeStrong: 'rgba(0,119,168,0.42)'
+  };
+  const font = { color: '#1a1714', face: 'IBM Plex Sans', size: 13 };
+  const nodes = new vis.DataSet([
+    { id: 'esp', label: 'José R. Espinoza', shape: 'dot', size: 32, color: { background: C.inv, border: C.invBorder }, font },
+    { id: 'tor', label: 'Miguel Torres', shape: 'dot', size: 30, color: { background: C.inv, border: C.invBorder }, font },
+    { id: 'scholar', label: 'Scholar / ORCID', shape: 'box', color: { background: '#fff', border: C.paperBorder }, font },
+    { id: 'abstracts', label: 'Abstracts\nOpenAlex', shape: 'box', color: { background: '#fff', border: C.paperBorder }, font: { ...font, multi: true } },
+    { id: 'k1', label: 'Control predictivo', shape: 'dot', size: 18, color: { background: C.kw, border: C.kwBorder }, font: { ...font, color: '#fff' } },
+    { id: 'k2', label: 'Electrónica de potencia', shape: 'dot', size: 18, color: { background: C.kw, border: C.kwBorder }, font: { ...font, color: '#fff' } },
+    { id: 'k3', label: 'Generación distribuida', shape: 'dot', size: 16, color: { background: C.kw, border: C.kwBorder }, font: { ...font, color: '#fff' } },
+    { id: 'matrix', label: 'Matriz\ninvestigador-keyword', shape: 'box', color: { background: '#fff', border: C.kwBorder }, font: { ...font, multi: true } },
+    { id: 'search', label: 'Buscador\nsemántico', shape: 'dot', size: 24, color: { background: C.tool, border: C.toolBorder }, font: { ...font, color: '#fff', multi: true } },
+    { id: 'pdf', label: 'PDFs IEEE\nMistral OCR', shape: 'box', color: { background: '#fff', border: C.paperBorder }, font: { ...font, multi: true } },
+    { id: 'rag', label: 'RAG\nfuturo', shape: 'dot', size: 20, color: { background: C.paper, border: C.paperBorder }, font: { ...font, color: '#fff', multi: true } }
+  ]);
+  const edges = new vis.DataSet([
+    { from: 'esp', to: 'scholar', width: 2, color: { color: C.edge } },
+    { from: 'tor', to: 'scholar', width: 2, color: { color: C.edge } },
+    { from: 'scholar', to: 'abstracts', arrows: 'to', width: 2, color: { color: C.edge } },
+    { from: 'abstracts', to: 'k1', arrows: 'to', width: 2, color: { color: C.edgeStrong } },
+    { from: 'abstracts', to: 'k2', arrows: 'to', width: 2, color: { color: C.edgeStrong } },
+    { from: 'abstracts', to: 'k3', arrows: 'to', width: 2, color: { color: C.edgeStrong } },
+    { from: 'esp', to: 'k1', width: 2, color: { color: C.edgeStrong } },
+    { from: 'tor', to: 'k1', width: 2, color: { color: C.edgeStrong } },
+    { from: 'esp', to: 'k2', width: 2, color: { color: C.edgeStrong } },
+    { from: 'tor', to: 'k2', width: 2, color: { color: C.edgeStrong } },
+    { from: 'tor', to: 'k3', width: 2, color: { color: C.edgeStrong } },
+    { from: 'k1', to: 'matrix', arrows: 'to', width: 2, color: { color: C.edge } },
+    { from: 'k2', to: 'matrix', arrows: 'to', width: 2, color: { color: C.edge } },
+    { from: 'k3', to: 'matrix', arrows: 'to', width: 2, color: { color: C.edge } },
+    { from: 'matrix', to: 'search', arrows: 'to', width: 3, color: { color: C.edgeStrong } },
+    { from: 'pdf', to: 'rag', arrows: 'to', dashes: true, width: 2, color: { color: C.edge } },
+    { from: 'rag', to: 'search', arrows: 'to', dashes: true, width: 2, color: { color: C.edge } }
+  ]);
+  const container = document.getElementById('grafo');
+  const options = {
+    physics: { stabilization: true, barnesHut: { gravitationalConstant: -3600, springLength: 145, springConstant: 0.045 } },
+    nodes: { borderWidth: 2, shadow: { enabled: true, color: 'rgba(0,0,0,0.08)', size: 8, x: 0, y: 2 } },
+    edges: { smooth: { type: 'continuous' }, arrows: { to: { scaleFactor: 0.8 } } },
+    interaction: { hover: true, tooltipDelay: 120 }
+  };
+  new vis.Network(container, { nodes, edges }, options);
+})();
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) entry.target.classList.add('in');
+  });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>
