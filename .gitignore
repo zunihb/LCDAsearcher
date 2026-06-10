@@ -20,6 +20,7 @@ data/ieee_manifest.csv
 data/lcda_demo.db.bak
 output/*
 !output/.gitkeep
+!output/ieee_pdfs_manifest.csv
 
 # Assets generados por Pyvis (si quedan en raíz)
 lib/

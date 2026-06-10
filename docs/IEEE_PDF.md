@@ -79,6 +79,18 @@ Planeado:
 - Cola batch para papers con `doi LIKE '10.1109%'` sin PDF local
 - Actualizar `documentos` y `papers.url_pdf`
 
-## Manifest de ejemplo
+## Manifest en el repositorio
 
-Ver skill `ieee-xplore-downloader` para columnas: `document_id`, `doi`, `url`, `pdf_url`, `status`, `local_path`.
+Listado actual de papers IEEE y estado de descarga:
+
+- **`output/ieee_pdfs_manifest.csv`** — 294 filas, 293 `descargado`, 1 `sin_acceso` (#299 libro IEEE)
+
+Regenerar tras nuevas descargas:
+
+```bash
+python scripts/build_ieee_manifest.py
+```
+
+## Manifest local (runtime)
+
+`data/ieee_manifest.csv` — log de corridas del script de descarga (gitignored).
