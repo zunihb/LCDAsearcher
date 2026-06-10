@@ -82,6 +82,23 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_papers_by_researcher_and_topic",
+            "description": "Cuenta cuántos papers tiene cada investigador en un tema específico. Retorna una tabla con investigador, papers, citas y último año. Útil para preguntas como '¿cuántos papers tiene cada investigador en convertidores multinivel?'",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Tema o keyword a buscar (ej: 'convertidores multinivel', 'control predictivo', 'photovoltaic')",
+                    },
+                },
+                "required": ["topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_topic_matches",
             "description": "Obtiene los matches temáticos entre investigadores (qué investigadores trabajan en temas similares y podrían colaborar). Útil para preguntas sobre sinergias o colaboraciones potenciales.",
             "parameters": {
@@ -138,6 +155,7 @@ def execute_tool(db: Database, name: str, arguments: dict[str, Any]) -> str:
         "list_researchers": lambda db, args: _list_researchers(db),
         "get_researcher_profile": lambda db, args: _get_researcher_profile(db, args["name"]),
         "search_papers": lambda db, args: _search_papers(db, args["query"], args.get("limit", 10)),
+        "get_papers_by_researcher_and_topic": lambda db, args: _get_papers_by_researcher_and_topic(db, args["topic"]),
         "get_topic_matches": lambda db, args: _get_topic_matches(db, args.get("keyword")),
         "search_keywords": lambda db, args: _search_keywords(db, args["term"]),
         "get_db_stats": lambda db, args: _get_db_stats(db),
@@ -286,6 +304,39 @@ def _search_papers(db: Database, query: str, limit: int = 10) -> list[dict]:
             "anio": r["anio"],
             "citas": r["citado_por"],
             "autores": r.get("autores_texto", ""),
+        }
+        for r in rows
+    ]
+
+
+def _get_papers_by_researcher_and_topic(db: Database, topic: str) -> list[dict]:
+    """Cuenta papers por investigador para un tema específico."""
+    rows = db.query(
+        """
+        SELECT
+            i.nombre,
+            i.afiliacion,
+            COUNT(DISTINCT p.id) AS papers,
+            SUM(COALESCE(p.citado_por, 0)) AS citas,
+            MAX(p.anio) AS ultimo_anio
+        FROM investigadores i
+        JOIN autorias a ON i.scholar_id = a.scholar_id
+        JOIN papers p ON p.id = a.paper_id
+        JOIN paper_keywords pk ON pk.paper_id = p.id
+        JOIN keywords k ON k.id = pk.keyword_id
+        WHERE COALESCE(k.termino_canonico, k.termino) LIKE ?
+        GROUP BY i.scholar_id, i.nombre, i.afiliacion
+        ORDER BY papers DESC, citas DESC
+        """,
+        (f"%{topic}%",),
+    )
+    return [
+        {
+            "investigador": r["nombre"],
+            "afiliacion": r.get("afiliacion", ""),
+            "papers": r["papers"],
+            "citas": r["citas"],
+            "ultimo_anio": r["ultimo_anio"],
         }
         for r in rows
     ]
