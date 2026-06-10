@@ -74,7 +74,13 @@ def main() -> int:
 
     if not args.skip_extract:
         print("[1/7] Extracción Google Scholar...")
-        r = run_extract(db, investigadores, raw_dir, scholarly_cfg)
+        r = run_extract(
+            db,
+            investigadores,
+            raw_dir,
+            scholarly_cfg,
+            force_refresh=args.force_refresh,
+        )
         print(f"      → {r['papers']} papers en {r['duracion_seg']:.1f}s")
     else:
         print("[1/7] Extracción omitida")
@@ -118,7 +124,7 @@ def main() -> int:
         print("[4/7] Keywords con IA...")
         r = run_keywords(
             db,
-            por_paper=keywords_cfg.get("por_paper", 5),
+            por_paper=keywords_cfg.get("por_paper", 15),
             parallel_workers=keywords_cfg.get("parallel_workers", 1),
             progress_every=keywords_cfg.get("progress_every", 1),
             idioma=keywords_cfg.get("idioma", "es"),
@@ -153,6 +159,8 @@ def main() -> int:
     print("[7/7] Reporte...")
     r = run_report(db, output_dir, trends_data)
     print(f"      → {r['reporte_md']}")
+    if r.get("matches_investigadores"):
+        print(f"      → {r['matches_investigadores']}")
 
     print("\n=== Pipeline completado ===")
     print(f"Salidas en: {output_dir.resolve()}")

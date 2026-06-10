@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import random
+import re
 import time
+from difflib import SequenceMatcher
 from typing import Any
 
 import requests
@@ -22,21 +24,74 @@ def _reconstruct_openalex_abstract(inverted: dict[str, list[int]] | None) -> str
     return " ".join(w for w in words if w).strip()
 
 
-def _openalex_search_work(titulo: str, mailto: str) -> dict[str, Any] | None:
+def _normalize_title(title: str) -> str:
+    title = title.lower().strip()
+    title = re.sub(r"[^a-z0-9áéíóúñü]+", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def _title_score(query_title: str, candidate_title: str) -> float:
+    q = _normalize_title(query_title)
+    c = _normalize_title(candidate_title)
+    if not q or not c:
+        return 0.0
+    if q == c:
+        return 1.0
+    # La inclusión permite subtítulos o variantes menores de capitalización.
+    if len(q) > 18 and (q in c or c in q):
+        return 0.96
+    return SequenceMatcher(None, q, c).ratio()
+
+
+def _is_plausible_match(
+    query_title: str,
+    work: dict[str, Any],
+    query_year: int | None = None,
+    min_score: float = 0.88,
+) -> bool:
+    score = _title_score(query_title, work.get("title") or "")
+    if score >= 0.96:
+        return True
+    if score < min_score:
+        return False
+    if query_year is None:
+        return True
+    work_year = work.get("publication_year")
+    if not isinstance(work_year, int):
+        return True
+    return abs(work_year - query_year) <= 1
+
+
+def _openalex_search_work(
+    titulo: str,
+    mailto: str,
+    anio: int | None = None,
+) -> dict[str, Any] | None:
+    """Busca el work en OpenAlex sin aceptar a ciegas el primer resultado.
+
+    Antes se retornaba results[0] cuando no había match claro; eso podía asignar
+    DOI, autores o abstracts de otro paper. Ahora se ordena por similitud de
+    título y se exige confianza mínima, usando año como segunda señal cuando está.
+    """
     try:
         r = requests.get(
             "https://api.openalex.org/works",
-            params={"search": titulo, "per_page": 3, "mailto": mailto},
+            params={"search": titulo, "per_page": 5, "mailto": mailto},
             timeout=25,
         )
         r.raise_for_status()
         results = r.json().get("results", [])
-        tit_low = titulo.lower().strip()
-        for work in results:
-            wtitle = (work.get("title") or "").lower().strip()
-            if wtitle == tit_low or tit_low in wtitle or wtitle in tit_low:
-                return work
-        return results[0] if results else None
+        if not results:
+            return None
+        ranked = sorted(
+            results,
+            key=lambda w: _title_score(titulo, w.get("title") or ""),
+            reverse=True,
+        )
+        best = ranked[0]
+        if _is_plausible_match(titulo, best, anio):
+            return best
+        return None
     except Exception:
         return None
 
@@ -98,7 +153,7 @@ def enrich_paper_openalex(
     paper: dict[str, Any],
     mailto: str,
 ) -> bool:
-    work = _openalex_search_work(paper["titulo"], mailto)
+    work = _openalex_search_work(paper["titulo"], mailto, paper.get("anio"))
     if not work:
         return False
     meta = _work_to_metadata(work)

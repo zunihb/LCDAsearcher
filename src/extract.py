@@ -189,6 +189,7 @@ def run_extract(
     investigadores: list[dict],
     raw_dir: Path,
     scholarly_cfg: dict,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     t0 = time.time()
     total_papers = 0
@@ -201,6 +202,7 @@ def run_extract(
             use_proxies=scholarly_cfg.get("use_proxies", False),
             pause_min=scholarly_cfg.get("pause_min_sec", 2),
             pause_max=scholarly_cfg.get("pause_max_sec", 5),
+            force_refresh=force_refresh,
             fill_each_paper=scholarly_cfg.get("fill_each_paper", False),
         )
         total_papers += persist_profile(db, profile)
