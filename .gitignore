@@ -8,8 +8,16 @@ venv/
 
 # Datos generados (reproducibles con el pipeline)
 data/lcda.db
+data/lcda.db-shm
+data/lcda.db-wal
 data/raw/*
 !data/raw/.gitkeep
+data/pdfs/*
+!data/pdfs/.gitkeep
+data/ieee_browser_profile/
+data/ieee_chrome_cdp/
+data/ieee_manifest.csv
+data/lcda_demo.db.bak
 output/*
 !output/.gitkeep
 

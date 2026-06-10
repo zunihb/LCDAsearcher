@@ -52,13 +52,31 @@ Marcar en manifest:
 - `opened_pdf_viewer` — visible en browser, guardar manualmente
 - `oa_repository` — usar `url_pdf` de OpenAlex (copia en repositorio)
 
+## Script de prueba (`scripts/download_ieee_pdf.py`)
+
+Usa **Chrome del sistema** con perfil persistente en `data/ieee_browser_profile/` (sesión separada del Chrome habitual).
+
+```bash
+# 0) Abrir Chrome IEEE (persiste aunque cierres Cursor)
+./scripts/open_ieee_chrome.sh
+
+# 1) Una vez: guardar login institucional UdeC (ventana Chrome ~90 s)
+python scripts/download_ieee_pdf.py --login
+
+# 2) Descargar un paper por id de la BD
+python scripts/download_ieee_pdf.py 4
+
+# PDF → data/pdfs/<paper_id>.pdf
+# Manifest → data/ieee_manifest.csv
+```
+
+Requisito: `pip install playwright && playwright install chrome`
+
 ## Próximo módulo (`src/ieee.py`)
 
 Planeado:
 
-- Leer papers con `doi LIKE '10.1109%'` sin PDF local
-- Generar cola de descarga
-- Integrar con browser MCP / Playwright
+- Cola batch para papers con `doi LIKE '10.1109%'` sin PDF local
 - Actualizar `documentos` y `papers.url_pdf`
 
 ## Manifest de ejemplo
