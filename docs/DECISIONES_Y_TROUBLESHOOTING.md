@@ -359,3 +359,72 @@ Flujo:
 2. **Preciso**: el LLM pide exactamente los datos que necesita
 3. **Rápido**: 4-5x más rápido que enviar todo el contexto
 4. **Mantenible**: cada tool es una función Python independiente
+
+---
+
+## Chat agentic (2026-06-10)
+
+### Evolución
+
+El chat pasó por 3 arquitecturas:
+
+| Versión | Approach | Tiempo | Tokens prompt |
+|---------|----------|--------|---------------|
+| v1 | Contexto gigante | ~60s | ~5000 |
+| v2 | Tool calling simple | ~15s | ~200 |
+| v3 | **Agente loop** | ~10-40s | ~200 |
+
+### Arquitectura agentic (v3)
+
+```
+Usuario: "¿quién trabaja en control predictivo?"
+    │
+    ▼
+┌─ Agente Loop (max 6 rounds) ──────────────────────┐
+│                                                     │
+│  Round 1:                                           │
+│    LLM → search_keywords("predictivo")              │
+│    LLM → search_papers("predictivo")                │
+│    (tool calls en paralelo)                         │
+│    ▸ Ejecutar tools → resultados                    │
+│                                                     │
+│  Round 2:                                           │
+│    LLM → respuesta final (con datos de tools)       │
+│    ✅ FIN                                           │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Reglas del agente (system prompt)
+
+- Máximo 3-4 tool calls por turno
+- No llamar `get_researcher_profile` para cada investigador encontrado
+- Usar `search_keywords` + `search_papers` para preguntas generales
+- Si los datos son suficientes, generar respuesta sin más tools
+
+### Tools disponibles
+
+| Tool | Descripción | Tiempo |
+|------|-------------|--------|
+| `get_current_date` | Fecha actual | ~0.01s |
+| `list_researchers` | Lista investigadores | ~0.05s |
+| `get_researcher_profile` | Perfil detallado | ~0.1s |
+| `search_papers` | Buscar papers | ~0.03s |
+| `get_topic_matches` | Matches entre investigadores | ~0.1s |
+| `search_keywords` | Buscar keywords | ~0.03s |
+| `get_db_stats` | Stats de la BD | ~0.02s |
+
+### Performance por tipo de pregunta
+
+| Tipo | Tool calls | Tiempo |
+|------|-----------|--------|
+| Simple ("¿cuántos papers?") | 1 | ~8s |
+| Perfil ("papers de Espinoza") | 1 | ~15s |
+| Temática ("control predictivo") | 2-3 | ~15-40s |
+| Fecha ("¿qué día es hoy?") | 1 | ~8s |
+
+### Limitaciones actuales
+
+- **Modelo**: mimo-v2.5-pro es un modelo de razonamiento (thinking), lo que agrega latencia. Un modelo más ligero sería más rápido para tool calling.
+- **Sin streaming de tool calls**: el usuario ve los tools ejecutándose pero la respuesta final se genera completa (no streaming parcial).
+- **Historial**: se mantiene en memoria, se pierde al reiniciar.

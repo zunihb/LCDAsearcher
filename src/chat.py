@@ -1,24 +1,26 @@
-"""Chat interactivo para LCDA Searcher — con tool calling.
+"""Chat agentic para LCDA Searcher.
 
-En lugar de enviar todo el contexto al LLM, el modelo pide datos
-bajo demanda via function calls. Mucho más rápido y escalable.
+El LLM actúa como un agente: planifica, ejecuta tools, observa resultados,
+y decide siguiente paso. El usuario ve cada paso en tiempo real.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import readline  # noqa: F401 — habilita historial de flechas en input()
-import sys
+import readline  # noqa: F401
+import time
 from typing import Any
 
 from openai import OpenAI
 from rich.console import Console
 from rich.live import Live
+from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.text import Text
 
 from src.cli_output import (
-    StreamRenderer,
     console,
     print_db_stats,
     print_error,
@@ -26,21 +28,64 @@ from src.cli_output import (
     print_match_table,
     print_researcher_profile,
     print_welcome,
-    _strip_inline_thinking,
 )
 from src.db import Database
 from src.tools import TOOLS, execute_tool
 
 SYSTEM_PROMPT = """Eres el asistente de LCDA Searcher, un sistema de mapeo de investigación en electrónica de potencia.
 
-Tienes acceso a una base de datos con investigadores, papers y keywords. Usa las tools disponibles para responder las preguntas del usuario.
+Tienes acceso a una base de datos con investigadores, papers y keywords a través de tools.
 
-Reglas:
+## Instrucciones
 - Responde en español, tono académico pero directo.
 - Cita papers como: "Título (Año, N citas)"
-- Si no tienes datos suficientes, di qué información falta.
-- Sé conciso. Usa bullets y tablas cuando corresponda.
-- No inventes datos que no estén en la base."""
+- Usa bullets y tablas cuando corresponda.
+- NO inventes datos. Si no tienes información, di qué falta.
+- Sé conciso. Respuestas directas, no ensayos.
+
+## Reglas de tools
+- Llama SOLO los tools que necesitas. No llames tools por curiosidad.
+- Si `search_papers` o `search_keywords` ya te dan suficiente info, NO llames `get_researcher_profile` para cada investigador.
+- Máximo 3-4 tool calls por turno. Si necesitas más, resume lo que tienes y pregunta al usuario.
+- Puedes llamar múltiples tools en paralelo si son independientes.
+- Para preguntas generales ("¿quién trabaja en X?"), usa `search_keywords` + `search_papers`. No perfiles individuales."""
+
+
+# ── Utilidades de display ────────────────────────────────────────────
+
+
+def _show_tool_call(name: str, args: dict) -> None:
+    """Muestra qué tool se está ejecutando."""
+    args_str = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else ""
+    console.print(f"  [dim]▸ {name}({args_str})[/dim]")
+
+
+def _show_tool_result(name: str, result: str) -> None:
+    """Muestra resumen del resultado del tool."""
+    try:
+        data = json.loads(result)
+        if isinstance(data, list):
+            console.print(f"  [dim]  → {len(data)} resultados[/dim]")
+        elif isinstance(data, dict):
+            if "error" in data:
+                console.print(f"  [dim]  → error: {data['error']}[/dim]")
+            else:
+                keys = list(data.keys())[:4]
+                console.print(f"  [dim]  → {keys}[/dim]")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+
+def _render_response(content: str) -> None:
+    """Renderiza la respuesta final como Markdown."""
+    if not content:
+        return
+    console.print()
+    console.print(Markdown(content))
+    console.print()
+
+
+# ── Comandos especiales ──────────────────────────────────────────────
 
 
 def _cmd_matches(db: Database) -> None:
@@ -103,50 +148,100 @@ def _cmd_fuentes(db: Database) -> None:
     print_db_stats(stats[0])
 
 
-def _run_tool_loop(
+# ── Agente loop ──────────────────────────────────────────────────────
+
+
+def _agent_loop(
     client: OpenAI,
     db: Database,
     model: str,
-    messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]],
-    max_rounds: int = 5,
+    user_input: str,
+    historial: list[dict[str, str]],
 ) -> str:
-    """Ejecuta el loop de tool calling hasta obtener respuesta final."""
-    for _ in range(max_rounds):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
-        )
+    """Ejecuta el agente loop: LLM → tools → LLM → ... → respuesta final.
+
+    Retorna el contenido de la respuesta final.
+    """
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+    ]
+
+    # Historial reciente
+    for h in historial[-20:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+
+    messages.append({"role": "user", "content": user_input})
+
+    max_rounds = 6
+    total_tool_calls = 0
+
+    for round_num in range(max_rounds):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=TOOLS,
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+                max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2000")),
+            )
+        except Exception as e:
+            if round_num == 0:
+                raise
+            # Si ya hubo tool calls, intentar una respuesta sin tools
+            console.print(f"  [dim]⚠ Error en round {round_num + 1}, generando respuesta final...[/dim]")
+            messages.append({"role": "system", "content": "Genera una respuesta final basada en los datos recopilados hasta ahora."})
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+                max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2000")),
+            )
+            return resp.choices[0].message.content or "(error generando respuesta)"
 
         msg = resp.choices[0].message
         messages.append(msg)
 
-        # Si no hay tool calls, retornar respuesta final
+        # Sin tool calls → respuesta final
         if not msg.tool_calls:
             return msg.content or "(sin respuesta)"
 
-        # Ejecutar cada tool call
+        # Ejecutar tool calls
         for tc in msg.tool_calls:
-            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-            result = execute_tool(db, tc.function.name, args)
+            total_tool_calls += 1
+            try:
+                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            except json.JSONDecodeError:
+                args = {}
+
+            _show_tool_call(tc.function.name, args)
+
+            try:
+                result = execute_tool(db, tc.function.name, args)
+            except Exception as e:
+                result = json.dumps({"error": str(e)})
+
+            _show_tool_result(tc.function.name, result)
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
                 "content": result,
             })
 
-    return "(demasiadas iteraciones de tools)"
+    # Máximo de rounds alcanzado
+    console.print(f"  [dim]⚠ Máximo de {max_rounds} rounds alcanzado ({total_tool_calls} tool calls)[/dim]")
+    return f"(Agente alcanzó el límite de {max_rounds} rounds. Intenta una pregunta más específica.)"
+
+
+# ── Chat loop principal ──────────────────────────────────────────────
 
 
 def run_chat(db: Database, client: OpenAI) -> None:
-    """Loop principal del chat con tool calling."""
+    """Loop principal del chat agentic."""
     model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
 
     print_welcome(
-        "LCDA Searcher — Chat de Investigación",
+        "LCDA Searcher — Agente de Investigación",
         commands=[
             ("/matches", "ver matches temáticos top"),
             ("/perfil <nombre>", "resumen de un investigador"),
@@ -159,13 +254,12 @@ def run_chat(db: Database, client: OpenAI) -> None:
             '"¿quién trabaja en control predictivo?"',
             '"compará a los investigadores en electrónica de potencia"',
             '"últimos papers de Espinoza"',
+            '"¿cuántos papers hay sobre fotovoltaica?"',
             '"¿cuál es la fecha de hoy?"',
         ],
     )
 
     historial: list[dict[str, str]] = []
-    max_history = 10
-
     sesion_id = db.crear_sesion_chat(modo="chat")
 
     while True:
@@ -221,68 +315,17 @@ def run_chat(db: Database, client: OpenAI) -> None:
             print_info("Comandos: /matches, /perfil, /fuentes, /limpiar, /salir")
             continue
 
-        # ── Tool calling loop ──
+        # ── Ejecutar agente ──
+        t0 = time.time()
         try:
-            messages: list[dict[str, Any]] = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-            ]
-
-            # Historial reciente
-            trimmed = historial[-(max_history * 2):] if historial else []
-            for h in trimmed:
-                messages.append({"role": h["role"], "content": h["content"]})
-
-            messages.append({"role": "user", "content": user_input})
-
-            renderer = StreamRenderer()
-            renderer.start()
-            with Live(Spinner("dots", text=" [dim]Pensando...[/dim]"), console=console, transient=True):
-                # Primera llamada (puede retornar tool calls)
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=TOOLS,
-                    temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-                    max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
-                )
-
-                msg = resp.choices[0].message
-                messages.append(msg)
-
-                if msg.tool_calls:
-                    # Ejecutar tools y obtener respuesta final
-                    for tc in msg.tool_calls:
-                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                        result = execute_tool(db, tc.function.name, args)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        })
-
-                    # Segunda llamada con resultados de tools (streaming)
-                    for chunk in client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        tools=TOOLS,
-                        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-                        max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4000")),
-                        stream=True,
-                    ):
-                        delta = chunk.choices[0].delta if chunk.choices else None
-                        if delta and delta.content:
-                            renderer.add(delta.content)
-                else:
-                    # Respuesta directa sin tools
-                    if msg.content:
-                        renderer.add(msg.content)
-
-            content = renderer.stop()
-            content = _strip_inline_thinking(content)
-
+            content = _agent_loop(client, db, model, user_input, historial)
+            _render_response(content)
         except Exception as e:
             print_error(str(e))
             continue
+
+        elapsed = time.time() - t0
+        console.print(f"  [dim]⏱ {elapsed:.1f}s[/dim]", highlight=False)
 
         historial.append({"role": "user", "content": user_input})
         historial.append({"role": "assistant", "content": content})
