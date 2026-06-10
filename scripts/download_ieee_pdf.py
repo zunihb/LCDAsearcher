@@ -227,9 +227,27 @@ def download_with_playwright(
     return out_path
 
 
+def papers_sin_pdf(conn: sqlite3.Connection, limit: int) -> list[int]:
+    rows = conn.execute(
+        """
+        SELECT id FROM papers
+        WHERE doi LIKE '10.1109%'
+        ORDER BY citado_por DESC
+        """
+    ).fetchall()
+    pending = []
+    for (pid,) in rows:
+        if not (PDF_DIR / f"{pid}.pdf").exists():
+            pending.append(pid)
+        if len(pending) >= limit:
+            break
+    return pending
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Descargar PDF IEEE para un paper de lcda.db")
-    parser.add_argument("paper_id", type=int, nargs="?", default=4, help="ID en tabla papers")
+    parser.add_argument("paper_id", type=int, nargs="?", default=None, help="ID en tabla papers")
+    parser.add_argument("--batch", type=int, default=0, help="Descargar N papers IEEE sin PDF local")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument(
         "--login",
@@ -247,7 +265,26 @@ def main() -> None:
     if args.login:
         login_institutional(args.headless, args.wait)
         return
-    download_with_playwright(args.paper_id, headless=args.headless, cdp_url=args.cdp)
+
+    if args.batch > 0:
+        conn = sqlite3.connect(DB_PATH)
+        ids = papers_sin_pdf(conn, args.batch)
+        conn.close()
+        print(f"Lote: {len(ids)} papers → {ids}")
+        ok, fail = 0, 0
+        for i, pid in enumerate(ids, 1):
+            print(f"\n[{i}/{len(ids)}]")
+            if download_with_playwright(pid, headless=args.headless, cdp_url=args.cdp):
+                ok += 1
+            else:
+                fail += 1
+            if i < len(ids):
+                time.sleep(2)
+        print(f"\nResumen: {ok} ok, {fail} fallidos")
+        return
+
+    paper_id = args.paper_id if args.paper_id is not None else 4
+    download_with_playwright(paper_id, headless=args.headless, cdp_url=args.cdp)
 
 
 if __name__ == "__main__":
