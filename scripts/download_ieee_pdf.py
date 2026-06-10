@@ -248,6 +248,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Descargar PDF IEEE para un paper de lcda.db")
     parser.add_argument("paper_id", type=int, nargs="?", default=None, help="ID en tabla papers")
     parser.add_argument("--batch", type=int, default=0, help="Descargar N papers IEEE sin PDF local")
+    parser.add_argument("--all", action="store_true", help="Descargar todos los papers IEEE pendientes")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument(
         "--login",
@@ -266,9 +267,10 @@ def main() -> None:
         login_institutional(args.headless, args.wait)
         return
 
-    if args.batch > 0:
+    batch_n = 9999 if args.all else args.batch
+    if batch_n > 0:
         conn = sqlite3.connect(DB_PATH)
-        ids = papers_sin_pdf(conn, args.batch)
+        ids = papers_sin_pdf(conn, batch_n)
         conn.close()
         print(f"Lote: {len(ids)} papers → {ids}")
         ok, fail = 0, 0
