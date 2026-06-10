@@ -19,8 +19,6 @@ from src.cli_output import (
     print_info,
     print_match_table,
     print_researcher_profile,
-    print_response,
-    print_sources,
     print_welcome,
     _strip_inline_thinking,
 )
@@ -172,12 +170,6 @@ def run_chat(db: Database, client: OpenAI) -> None:
             with Live(Spinner("dots", text=" [dim]Buscando...[/dim]"), console=console, transient=True):
                 context = build_search_context(db, user_input)
 
-            # Mostrar fuentes
-            kw_found = context["keywords_encontradas"]
-            papers_found = len(context["papers_representativos"]) + len(context["papers_por_titulo"])
-            matches_found = len(context["matches_tematicos"])
-            print_sources(kw_found, papers_found, matches_found)
-
             # Streaming con spinner
             trimmed = historial[-(max_history * 2):] if historial else None
             renderer = StreamRenderer()
@@ -196,6 +188,9 @@ def run_chat(db: Database, client: OpenAI) -> None:
         historial.append({"role": "assistant", "content": content})
 
         # Persistir en DB
+        kw_found = context["keywords_encontradas"]
+        papers_found = len(context["papers_representativos"]) + len(context["papers_por_titulo"])
+        matches_found = len(context["matches_tematicos"])
         db.guardar_mensaje_chat(sesion_id, "user", user_input)
         db.guardar_mensaje_chat(
             sesion_id, "assistant", content,
