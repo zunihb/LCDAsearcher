@@ -40,7 +40,10 @@ def test_model(client: OpenAI, model: str) -> bool:
             temperature=0,
         )
         text = (r.choices[0].message.content or "").strip()
-        print(f"  ✓ {model}: {text[:60]}")
+        if not text:
+            print(f"  ✗ {model}: respuesta VACÍA (no usar para keywords)")
+            return False
+        print(f"  ✓ {model}: {text[:80]}")
         return True
     except Exception as e:
         print(f"  ✗ {model}: {e}")

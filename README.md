@@ -19,20 +19,24 @@ No es solo un buscador: es un **grafo de redes semánticas** que visualiza cómo
 | `Wk2naEgAAAAJ` | José R. Espinoza | Universidad de Concepción |
 | `6O2aO7IAAAAJ` | Miguel Torres | Universidad de los Andes |
 
-### Pipeline (6 pasos)
+### Pipeline (7 pasos)
 
 ```
-Scholar IDs → extract.py (caché JSON) → SQLite
+Scholar IDs → extract.py (scraping + caché JSON) → SQLite
+                ↓
+         abstracts.py (OpenAlex API: abstract, DOI, autores, URLs)
                 ↓
          citations.py (top-5 papers, ~50 citantes c/u)
                 ↓
-         keywords.py (LLM OpenAI-compatible)
+         keywords.py (LLM + json_schema, 15 keywords/paper)
                 ↓
          trends.py (serie interna + OpenAlex global + brecha)
                 ↓
          graph.py (NetworkX + Pyvis) → grafo.html
          report.py → sinergias.csv, reporte.md, tendencias.html/csv
 ```
+
+**Documentación detallada:** carpeta [`docs/`](docs/README.md) (fuentes de datos, LLM, IEEE PDF, esquema BD).
 
 ### Entregables
 
@@ -51,12 +55,17 @@ Scholar IDs → extract.py (caché JSON) → SQLite
 
 Estas condiciones fueron acordadas en el diseño del piloto y **deben respetarse** al extender el sistema.
 
-### Fuente de datos
+### Fuentes de datos (3 capas)
 
-- **Google Scholar** vía `scholarly` para perfiles y publicaciones.
-- **Riesgo**: bloqueos por rate-limiting de Google.
-- **Mitigación**: caché JSON en `data/raw/<scholar_id>.json` — si el archivo existe, no se re-scrapea.
-- Opción `scholarly.use_proxies: true` en `config.yaml` para `FreeProxies`.
+| Capa | Tecnología | Rol |
+|------|------------|-----|
+| 1 | **Google Scholar** (`scholarly`) | Scraping — lista papers, citas, coautores perfil |
+| 2 | **OpenAlex** (API) | Abstract, DOI, autores/afiliaciones, URLs |
+| 3 | **IEEE Xplore** (browser + suscripción) | PDF para RAG — ver `docs/IEEE_PDF.md` |
+
+- Scholar: **no hay API oficial**; caché JSON en `data/raw/<scholar_id>.json`.
+- OpenAlex: API gratuita; `openalex_mailto` en `config.yaml`.
+- IEEE: **no pegar credenciales**; login institucional en navegador.
 
 ### Persistencia
 
@@ -76,8 +85,10 @@ Estas condiciones fueron acordadas en el diseño del piloto y **deben respetarse
 - Cliente **protocolo OpenAI-compatible** (`openai` con `base_url` configurable).
 - Compatible con: OpenAI, Gemini (endpoint compatible), OpenRouter, Ollama local, etc.
 - Variables en `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
-- Sin API key configurada: fallback local de keywords (tokens frecuentes del título/abstract).
-- AI SDK de Vercel **descartado** para el piloto (TypeScript); reservado para interfaz web de fase 2.
+- Recomendado: `mimo-v2.5-pro` + `LLM_JSON_MODE=json_schema` (ver `docs/LLM_Y_KEYWORDS.md`).
+- **15 keywords** por paper con salida JSON estructurada obligatoria.
+- Sin API key: fallback local desde título/abstract.
+- AI SDK de Vercel **descartado** en piloto; reservado para web fase 2.
 
 ### Tendencias
 
@@ -113,21 +124,18 @@ python main.py                      # 2) pipeline completo
 ```env
 LLM_BASE_URL=https://opencode.ai/zen/go/v1
 LLM_API_KEY=sk-tu-clave
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=mimo-v2.5-pro
+LLM_JSON_MODE=json_schema
 ```
 
-2. **Modelos compatibles** con este proyecto (endpoint OpenAI `/v1/chat/completions`):
+2. **Modelos recomendados** (OpenCode Go, `/v1/chat/completions`):
 
-| Model ID | Nombre |
-|----------|--------|
-| `deepseek-v4-flash` | DeepSeek V4 Flash (barato, recomendado para pruebas) |
-| `deepseek-v4-pro` | DeepSeek V4 Pro |
-| `glm-5.1` | GLM-5.1 |
-| `glm-5` | GLM-5 |
-| `kimi-k2.6` | Kimi K2.6 |
-| `kimi-k2.5` | Kimi K2.5 |
-| `mimo-v2.5` | MiMo-V2.5 |
-| `mimo-v2.5-pro` | MiMo-V2.5-Pro |
+| Model ID | Uso |
+|----------|-----|
+| `mimo-v2.5-pro` | **Keywords** — mejor calidad + json_schema |
+| `mimo-v2.5` | Más barato, alto volumen |
+| `kimi-k2.6` | Alternativa |
+| `deepseek-v4-flash` | Barato; JSON mode inestable vía proxy |
 
 3. **No compatibles** con el cliente actual (usan API Anthropic `/v1/messages`): MiniMax M2.5/M2.7/M3, Qwen3.6/3.7 Plus/Max.
 
@@ -149,10 +157,13 @@ python main.py
 ### Opciones CLI
 
 ```bash
-python main.py --skip-extract      # Usar solo datos ya en caché/BD
-python main.py --skip-citations    # Omitir scraping de citantes
-python main.py --skip-trends       # Omitir consultas OpenAlex
-python main.py --skip-keywords     # Omitir extracción de keywords
+python main.py --only-abstracts    # Solo OpenAlex: abstract, DOI, autores (~2 min)
+python main.py --skip-extract      # Usar caché/BD existente
+python main.py --skip-abstracts    # Omitir paso OpenAlex
+python main.py --skip-citations    # Omitir citantes Scholar
+python main.py --skip-trends       # Omitir tendencias
+python main.py --skip-keywords      # Omitir keywords
+python main.py --reprocess-keywords  # Borrar y regenerar keywords (15 términos)
 ```
 
 ### Requisitos
@@ -168,15 +179,22 @@ python main.py --skip-keywords     # Omitir extracción de keywords
 LCDAsearcher/
 ├── README.md                 # Este archivo (plan + condiciones)
 ├── PLAN.md                   # Plan consolidado detallado
+├── docs/                     # Documentación técnica ampliada
+│   ├── FUENTES_DE_DATOS.md   # Scholar / OpenAlex / IEEE
+│   ├── ESQUEMA_BD.md
+│   ├── LLM_Y_KEYWORDS.md
+│   ├── IEEE_PDF.md
+│   └── DECISIONES_Y_TROUBLESHOOTING.md  # Historial de decisiones del piloto
 ├── config.yaml               # IDs Scholar, parámetros del pipeline
 ├── .env.example              # Plantilla LLM
 ├── main.py                   # Orquestador CLI
 ├── presentacion_piloto.html  # Presentación para el profesor
 ├── src/
 │   ├── db.py                 # Esquema SQLite + helpers
-│   ├── extract.py            # Google Scholar → caché → SQLite
+│   ├── extract.py            # Google Scholar (scraping) → caché → SQLite
+│   ├── abstracts.py          # OpenAlex: abstract, DOI, autores, URLs
 │   ├── citations.py          # Citantes acotados
-│   ├── keywords.py           # LLM keywords + normalización
+│   ├── keywords.py           # LLM keywords (json_schema) + normalización
 │   ├── trends.py             # Tendencias internas/global + Plotly
 │   ├── graph.py              # NetworkX + Pyvis
 │   └── report.py             # Sinergias + reporte + métricas
@@ -193,11 +211,12 @@ LCDAsearcher/
 | Tabla | Propósito |
 |-------|-----------|
 | `investigadores` | Perfil + métricas (citas, índice h, i10) |
-| `papers` | Publicaciones (título, abstract, año, citado_por) |
+| `papers` | Título, **abstract**, DOI, `url_doi`, `url_ieee`, `url_pdf`, año, citas |
+| `paper_autores` | Autores por paper + afiliación (OpenAlex) |
 | `autorias` | Relación investigador ↔ paper |
 | `keywords` | Términos + término canónico (normalizado por LLM) |
-| `paper_keywords` | Relación paper ↔ keyword |
-| `coautores` | Red cercana del perfil Scholar |
+| `paper_keywords` | Relación paper ↔ keyword (15/paper) |
+| `coautores` | Red del perfil Scholar (con afiliación) |
 | `citas` | Papers citantes (top-5, acotado) |
 | `tendencias_globales` | Cache OpenAlex por keyword/año |
 | `pipeline_metricas` | Tiempos de ejecución por paso |

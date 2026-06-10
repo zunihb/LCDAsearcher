@@ -1,63 +1,65 @@
 # Plan consolidado — LCDA Searcher
 
-Documento de referencia del plan acordado. **No modificar sin consenso del equipo.**
+Documento de referencia del plan acordado. Ver también [`docs/`](docs/README.md) para detalle técnico y [`docs/DECISIONES_Y_TROUBLESHOOTING.md`](docs/DECISIONES_Y_TROUBLESHOOTING.md) para el historial de problemas resueltos y benchmarks.
 
 ## 1. Contexto
 
-Pipeline en Python para mapear sinergias entre investigadores del proyecto LCDA, comenzando con un piloto de 2 perfiles y escalable a 80–90 personas.
+Pipeline en Python para mapear sinergias entre investigadores LCDA, piloto 2 perfiles → escalable a 80–90 personas. El **paper** es la entidad central; hacia RAG con PDFs IEEE.
 
 ## 2. Decisiones técnicas (vinculantes)
 
 | Área | Decisión | Condición |
 |------|----------|-----------|
-| Fuente principal | Google Scholar (`scholarly`) | Caché JSON obligatoria; no re-scrapear si existe |
-| Persistencia | SQLite (`data/lcda.db`) | Un archivo; grafo reconstruido, no almacenado |
-| Citas | Conteos + coautores + citantes acotados | Top 5 papers, max 50 citantes, pausas anti-bloqueo |
-| IA keywords | OpenAI-compatible | Agnóstico al proveedor; fallback local sin API key |
-| Tendencias global | OpenAlex | API abierta; `mailto` en config |
-| Visualización | Pyvis (grafo) + Plotly (tendencias) | HTML standalone |
-| AI SDK Vercel | Descartado en piloto | Reservado para web fase 2 |
+| Descubrimiento | Google Scholar (`scholarly`) | **Scraping**, no API; caché JSON obligatoria |
+| Enriquecimiento | OpenAlex API | Abstracts, DOI, autores, URLs; `mailto` en config |
+| PDFs IEEE | Browser + suscripción UdeC | Sin credenciales en repo; ver `docs/IEEE_PDF.md` |
+| Persistencia | SQLite (`data/lcda.db`) | Grafo reconstruido, no almacenado |
+| Keywords | 15/paper, `json_schema` | LLM OpenCode Go `mimo-v2.5-pro` recomendado |
+| Citas | Acotado | Top 5 papers, max 50 citantes |
+| Tendencias | OpenAlex | Brecha interna vs global |
+| Visualización | Pyvis + Plotly | HTML standalone |
 
-## 3. Pipeline
+## 3. Pipeline (7 pasos)
 
-1. **extract.py** — Perfil + publicaciones → SQLite (dedup por título/ID)
-2. **citations.py** — Citantes de top-5 papers (reanudable)
-3. **keywords.py** — 5 keywords/paper + normalización global (2 pasadas LLM)
-4. **trends.py** — Serie interna por año + OpenAlex + cuadrante brecha
-5. **graph.py** — Grafo NetworkX → Pyvis HTML
-6. **report.py** — sinergias.csv, reporte.md, métrica tiempo
+1. **extract.py** — Scholar: perfiles, papers, coautores → SQLite + `data/raw/*.json`
+2. **abstracts.py** — OpenAlex: abstract completo, DOI, `url_doi`, `url_ieee`, `paper_autores`
+3. **citations.py** — Citantes top-5 (reanudable; Scholar suele bloquear)
+4. **keywords.py** — 15 keywords/paper, `response_format: json_schema`, guardado 1-a-1
+5. **trends.py** — Serie interna + OpenAlex global + cuadrante
+6. **graph.py** — Grafo → `output/grafo.html`
+7. **report.py** — `sinergias.csv`, `reporte.md`, tendencias
 
-## 4. Análisis de tendencias
+## 4. Fuentes: qué trae cada una
 
-### Interno
-Frecuencia de keyword canónica por año (`papers.anio` + `paper_keywords`).
+Ver [`docs/FUENTES_DE_DATOS.md`](docs/FUENTES_DE_DATOS.md).
 
-### Global
-OpenAlex: `works?search=<kw>&group_by=publication_year` → cache `tendencias_globales`.
+- **Scholar**: títulos, citas, red coautores — sin abstract en modo rápido
+- **OpenAlex**: abstract, DOI, autores/afiliaciones — indexa IEEE vía DOI
+- **IEEE Xplore**: PDF con login institucional — fase RAG
 
-### Categorías de brecha
-- **Oportunidad**: global sube, grupo cubre poco
-- **Fortaleza al alza**: grupo fuerte y global sube
-- **Madura**: grupo fuerte, global plano/baja
-- **Nicho**: ambos bajos
+## 5. LLM y JSON
 
-## 5. Fase futura: PDFs + RAG
+Ver [`docs/LLM_Y_KEYWORDS.md`](docs/LLM_Y_KEYWORDS.md).
 
-- Motor híbrido: local (Docling/Nougat/Marker) o API (Mistral OCR/LlamaParse)
-- Tablas: `documentos`, `doc_chunks`, `chunk_embeddings` (sqlite-vec)
-- Módulos: `ingest.py`, `rag.py`
-- Ya documentado en presentación (sección 07)
+- `json_schema` strict elimina basura tipo "The user wants..."
+- Abstract en BD mejora calidad de keywords
 
-## 6. Fuera de alcance (fase 2)
+## 6. Fase RAG (próxima)
+
+1. Cola PDF desde `papers.doi` / `url_ieee`
+2. Descarga con sesión browser IEEE (usuario logueado)
+3. `data/pdfs/`, tablas `documentos`, `doc_chunks`, `chunk_embeddings`
+4. Embeddings locales (`multilingual-e5` o `bge-m3`) — **no requiere Gemini**
+
+## 7. Fuera de alcance (fase 2)
 
 - Clustering 90 investigadores
-- Buscador web de expertos
-- Despliegue en nube
-- Extracción masiva citantes
 - Neo4j
+- Extracción masiva citantes
+- Interfaz web (Next.js)
 
-## 7. Métrica de venta
+## 8. Métrica de venta
 
 > "Hacer esto a mano tomaría ~4 h por investigador. Con el pipeline, toma minutos."
 
-Reporte incluye comparación explícita en `reporte.md`.
+Reporte incluye comparación en `output/reporte.md`.

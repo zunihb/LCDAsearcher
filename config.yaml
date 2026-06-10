@@ -12,6 +12,15 @@ scholarly:
   use_proxies: false
   pause_min_sec: 2
   pause_max_sec: 5
+  fill_each_paper: false   # true = Scholar fill por paper (lento; preferir abstracts.openalex)
+
+# Abstracts, DOI, URLs y autores por paper
+abstracts:
+  enabled: true
+  source: openalex          # openalex (rápido) | scholarly (lento, más completo)
+  pause_sec: 0.35           # entre requests OpenAlex
+  scholar_pause_min: 2
+  scholar_pause_max: 4
 
 # Citantes (acotado para evitar bloqueos)
 citations:
@@ -20,9 +29,11 @@ citations:
 
 # Keywords con IA
 keywords:
-  por_paper: 5
-  batch_size: 10
+  por_paper: 15
+  parallel_workers: 4   # 1 = secuencial con guardado inmediato por paper
+  progress_every: 1     # log de progreso cada N papers guardados
   idioma: es
+  json_mode: json_schema  # json_schema | json_object | text (OpenAI-compatible)
 
 # Tendencias (OpenAlex)
 trends:

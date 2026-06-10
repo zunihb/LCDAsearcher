@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -27,8 +28,25 @@ CREATE TABLE IF NOT EXISTS papers (
     venue TEXT,
     citado_por INTEGER DEFAULT 0,
     autores_texto TEXT,
+    url_scholar TEXT,
+    url_pdf TEXT,
+    url_doi TEXT,
+    url_ieee TEXT,
+    doi TEXT,
+    openalex_id TEXT,
     UNIQUE(scholar_pub_id),
     UNIQUE(titulo)
+);
+
+CREATE TABLE IF NOT EXISTS paper_autores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL,
+    nombre TEXT NOT NULL,
+    afiliacion TEXT,
+    orden INTEGER DEFAULT 0,
+    openalex_author_id TEXT,
+    FOREIGN KEY (paper_id) REFERENCES papers(id),
+    UNIQUE(paper_id, nombre)
 );
 
 CREATE TABLE IF NOT EXISTS autorias (
@@ -98,12 +116,14 @@ class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.Lock()
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
         try:
             yield conn
             conn.commit()
@@ -116,6 +136,20 @@ class Database:
     def init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(papers)").fetchall()}
+        for col, typ in [
+            ("url_scholar", "TEXT"),
+            ("url_pdf", "TEXT"),
+            ("url_doi", "TEXT"),
+            ("url_ieee", "TEXT"),
+            ("doi", "TEXT"),
+            ("openalex_id", "TEXT"),
+        ]:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE papers ADD COLUMN {col} {typ}")
 
     def upsert_investigador(
         self,
@@ -150,7 +184,16 @@ class Database:
         venue: str | None = None,
         citado_por: int = 0,
         autores_texto: str | None = None,
+        url_scholar: str | None = None,
+        url_pdf: str | None = None,
+        url_doi: str | None = None,
+        url_ieee: str | None = None,
+        doi: str | None = None,
+        openalex_id: str | None = None,
     ) -> int:
+        abs_val = abstract.strip() if abstract and abstract.strip() else None
+        if doi and not url_doi:
+            url_doi = f"https://doi.org/{doi}"
         with self.connect() as conn:
             if scholar_pub_id:
                 row = conn.execute(
@@ -159,11 +202,26 @@ class Database:
                 if row:
                     conn.execute(
                         """
-                        UPDATE papers SET abstract=?, anio=?, venue=?, citado_por=?,
-                        autores_texto=?, titulo=?
+                        UPDATE papers SET
+                            abstract=COALESCE(?, abstract),
+                            anio=COALESCE(?, anio),
+                            venue=COALESCE(NULLIF(?, ''), venue),
+                            citado_por=CASE WHEN ? > 0 THEN ? ELSE citado_por END,
+                            autores_texto=COALESCE(NULLIF(?, ''), autores_texto),
+                            titulo=?,
+                            url_scholar=COALESCE(?, url_scholar),
+                            url_pdf=COALESCE(?, url_pdf),
+                            url_doi=COALESCE(?, url_doi),
+                            url_ieee=COALESCE(?, url_ieee),
+                            doi=COALESCE(?, doi),
+                            openalex_id=COALESCE(?, openalex_id)
                         WHERE id=?
                         """,
-                        (abstract, anio, venue, citado_por, autores_texto, titulo, row["id"]),
+                        (
+                            abs_val, anio, venue or "", citado_por, citado_por,
+                            autores_texto or "", titulo,
+                            url_scholar, url_pdf, url_doi, url_ieee, doi, openalex_id, row["id"],
+                        ),
                     )
                     return row["id"]
 
@@ -171,22 +229,72 @@ class Database:
             if row:
                 conn.execute(
                     """
-                    UPDATE papers SET scholar_pub_id=COALESCE(?, scholar_pub_id),
-                    abstract=?, anio=?, venue=?, citado_por=?, autores_texto=?
+                    UPDATE papers SET
+                        scholar_pub_id=COALESCE(?, scholar_pub_id),
+                        abstract=COALESCE(?, abstract),
+                        anio=COALESCE(?, anio),
+                        venue=COALESCE(NULLIF(?, ''), venue),
+                        citado_por=CASE WHEN ? > 0 THEN ? ELSE citado_por END,
+                        autores_texto=COALESCE(NULLIF(?, ''), autores_texto),
+                        url_scholar=COALESCE(?, url_scholar),
+                        url_pdf=COALESCE(?, url_pdf),
+                        url_doi=COALESCE(?, url_doi),
+                        url_ieee=COALESCE(?, url_ieee),
+                        doi=COALESCE(?, doi),
+                        openalex_id=COALESCE(?, openalex_id)
                     WHERE id=?
                     """,
-                    (scholar_pub_id, abstract, anio, venue, citado_por, autores_texto, row["id"]),
+                    (
+                        scholar_pub_id, abs_val, anio, venue or "", citado_por, citado_por,
+                        autores_texto or "", url_scholar, url_pdf, url_doi, url_ieee, doi, openalex_id, row["id"],
+                    ),
                 )
                 return row["id"]
 
             cur = conn.execute(
                 """
-                INSERT INTO papers (scholar_pub_id, titulo, abstract, anio, venue, citado_por, autores_texto)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO papers (
+                    scholar_pub_id, titulo, abstract, anio, venue, citado_por, autores_texto,
+                    url_scholar, url_pdf, url_doi, url_ieee, doi, openalex_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (scholar_pub_id, titulo, abstract, anio, venue, citado_por, autores_texto),
+                (
+                    scholar_pub_id, titulo, abs_val, anio, venue, citado_por, autores_texto,
+                    url_scholar, url_pdf, url_doi, url_ieee, doi, openalex_id,
+                ),
             )
             return cur.lastrowid
+
+    def upsert_paper_autor(
+        self,
+        paper_id: int,
+        nombre: str,
+        afiliacion: str | None = None,
+        orden: int = 0,
+        openalex_author_id: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_autores (paper_id, nombre, afiliacion, orden, openalex_author_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(paper_id, nombre) DO UPDATE SET
+                    afiliacion = COALESCE(excluded.afiliacion, paper_autores.afiliacion),
+                    orden = excluded.orden,
+                    openalex_author_id = COALESCE(excluded.openalex_author_id, paper_autores.openalex_author_id)
+                """,
+                (paper_id, nombre, afiliacion, orden, openalex_author_id),
+            )
+
+    def get_papers_sin_abstract(self) -> list[dict[str, Any]]:
+        return self.query(
+            """
+            SELECT * FROM papers
+            WHERE abstract IS NULL OR trim(abstract) = ''
+            ORDER BY citado_por DESC
+            """
+        )
 
     def add_autoria(self, scholar_id: str, paper_id: int) -> None:
         with self.connect() as conn:
@@ -252,6 +360,30 @@ class Database:
                 "INSERT OR IGNORE INTO paper_keywords (paper_id, keyword_id) VALUES (?, ?)",
                 (paper_id, keyword_id),
             )
+
+    def save_paper_keywords(self, paper_id: int, keywords: list[str]) -> None:
+        """Persiste keywords de un paper en una sola transacción (reanudable 1 a 1)."""
+        if not keywords:
+            return
+        with self._write_lock:
+            with self.connect() as conn:
+                for kw in keywords:
+                    conn.execute(
+                        """
+                        INSERT INTO keywords (termino, termino_canonico)
+                        VALUES (?, ?)
+                        ON CONFLICT(termino) DO UPDATE SET
+                            termino_canonico = COALESCE(keywords.termino_canonico, excluded.termino)
+                        """,
+                        (kw, kw),
+                    )
+                    row = conn.execute(
+                        "SELECT id FROM keywords WHERE termino = ?", (kw,)
+                    ).fetchone()
+                    conn.execute(
+                        "INSERT OR IGNORE INTO paper_keywords (paper_id, keyword_id) VALUES (?, ?)",
+                        (paper_id, row["id"]),
+                    )
 
     def update_keyword_canonical(self, keyword_id: int, termino_canonico: str) -> None:
         with self.connect() as conn:

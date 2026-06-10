@@ -35,18 +35,28 @@ def _safe_int(val: Any, default: int = 0) -> int:
 
 def _pub_to_dict(pub: dict) -> dict[str, Any]:
     bib = pub.get("bib", {}) or {}
+    authors = bib.get("author", []) or []
+    pub_id = pub.get("author_pub_id") or pub.get("pub_url") or pub.get("eprint_url")
     return {
-        "scholar_pub_id": pub.get("pub_url") or pub.get("eprint_url") or None,
+        "scholar_pub_id": str(pub_id) if pub_id else None,
         "titulo": bib.get("title") or pub.get("title") or "Sin título",
-        "abstract": bib.get("abstract") or "",
+        "abstract": (bib.get("abstract") or "").strip(),
         "anio": _safe_int(bib.get("pub_year")),
         "venue": bib.get("venue") or bib.get("journal") or "",
         "citado_por": _safe_int(pub.get("num_citations")),
-        "autores_texto": ", ".join(bib.get("author", []) or []),
+        "autores_texto": ", ".join(authors),
+        "url_scholar": pub.get("pub_url") or None,
+        "url_pdf": pub.get("eprint_url") or None,
     }
 
 
-def _profile_to_dict(author: dict, filled: dict | None = None) -> dict[str, Any]:
+def _profile_to_dict(
+    author: dict,
+    filled: dict | None = None,
+    fill_each_paper: bool = False,
+    pause_min: float = 0.5,
+    pause_max: float = 1.5,
+) -> dict[str, Any]:
     filled = filled or author
     name = author.get("name", "")
     affil = ""
@@ -67,21 +77,27 @@ def _profile_to_dict(author: dict, filled: dict | None = None) -> dict[str, Any]
 
     pubs = []
     for pub in filled.get("publications", []) or []:
-        try:
-            from scholarly import scholarly
+        if fill_each_paper:
+            try:
+                from scholarly import scholarly
 
-            filled_pub = scholarly.fill(pub)
-            _pause(0.5, 1.5)
-            pubs.append(_pub_to_dict(filled_pub))
-        except Exception:
+                filled_pub = scholarly.fill(pub)
+                _pause(pause_min, pause_max)
+                pubs.append(_pub_to_dict(filled_pub))
+            except Exception:
+                pubs.append(_pub_to_dict(pub))
+        else:
             pubs.append(_pub_to_dict(pub))
 
-    citedby = filled.get("citedby5y") or filled.get("citedby") or {}
+    citas_total = _safe_int(filled.get("citedby"))
+    if not citas_total and filled.get("citedby5y"):
+        citas_total = sum(filled["citedby5y"].get("citations", []) or [])
+
     return {
         "scholar_id": author.get("scholar_id") or author.get("user_id"),
         "nombre": name,
         "afiliacion": affil,
-        "citas_total": _safe_int(citedby.get("table") and sum(citedby.get("citations", [])) or filled.get("citedby")),
+        "citas_total": citas_total,
         "indice_h": _safe_int(filled.get("hindex")),
         "indice_i10": _safe_int(filled.get("i10index")),
         "coautores": coautores,
@@ -98,6 +114,7 @@ def fetch_profile(
     pause_min: float = 2,
     pause_max: float = 5,
     force_refresh: bool = False,
+    fill_each_paper: bool = False,
 ) -> dict[str, Any]:
     cache_path = raw_dir / f"{scholar_id}.json"
     if cache_path.exists() and not force_refresh:
@@ -111,7 +128,13 @@ def fetch_profile(
     _pause(pause_min, pause_max)
     filled = scholarly.fill(author, sections=["basics", "indices", "counts", "coauthors", "publications"])
 
-    data = _profile_to_dict(author, filled)
+    data = _profile_to_dict(
+        author,
+        filled,
+        fill_each_paper=fill_each_paper,
+        pause_min=pause_min,
+        pause_max=pause_max,
+    )
     data["nombre"] = data.get("nombre") or nombre
     data["afiliacion"] = data.get("afiliacion") or afiliacion
     data["scholar_id"] = scholar_id
@@ -151,8 +174,12 @@ def persist_profile(db: Database, profile: dict[str, Any]) -> int:
             venue=pub.get("venue"),
             citado_por=pub.get("citado_por", 0),
             autores_texto=pub.get("autores_texto"),
+            url_scholar=pub.get("url_scholar"),
+            url_pdf=pub.get("url_pdf"),
         )
         db.add_autoria(scholar_id, paper_id)
+        for i, nombre in enumerate(a.strip() for a in (pub.get("autores_texto") or "").split(",") if a.strip()):
+            db.upsert_paper_autor(paper_id, nombre, orden=i)
         count += 1
     return count
 
@@ -174,6 +201,7 @@ def run_extract(
             use_proxies=scholarly_cfg.get("use_proxies", False),
             pause_min=scholarly_cfg.get("pause_min_sec", 2),
             pause_max=scholarly_cfg.get("pause_max_sec", 5),
+            fill_each_paper=scholarly_cfg.get("fill_each_paper", False),
         )
         total_papers += persist_profile(db, profile)
 
