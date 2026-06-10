@@ -12,7 +12,6 @@ import readline  # noqa: F401
 import time
 from typing import Any
 
-from openai import OpenAI
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -31,6 +30,7 @@ from src.cli_output import (
 )
 from src.db import Database
 from src.tools import TOOLS, execute_tool
+from src.llm_backend import LLMBackend
 
 SYSTEM_PROMPT = """Eres el asistente de LCDA Searcher, un sistema de mapeo de investigación en electrónica de potencia.
 
@@ -152,96 +152,43 @@ def _cmd_fuentes(db: Database) -> None:
 
 
 def _agent_loop(
-    client: OpenAI,
+    llm: LLMBackend,
     db: Database,
-    model: str,
     user_input: str,
     historial: list[dict[str, str]],
 ) -> str:
-    """Ejecuta el agente loop: LLM → tools → LLM → ... → respuesta final.
-
-    Retorna el contenido de la respuesta final.
-    """
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-    ]
-
-    # Historial reciente
+    """Ejecuta el agente loop usando LLMBackend unificado."""
+    messages: list[dict[str, Any]] = []
     for h in historial[-20:]:
         messages.append({"role": h["role"], "content": h["content"]})
-
     messages.append({"role": "user", "content": user_input})
 
-    max_rounds = 6
-    total_tool_calls = 0
+    def on_tool(name, args):
+        _show_tool_call(name, args)
 
-    for round_num in range(max_rounds):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=TOOLS,
-                temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-                max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2000")),
-            )
-        except Exception as e:
-            if round_num == 0:
-                raise
-            # Si ya hubo tool calls, intentar una respuesta sin tools
-            console.print(f"  [dim]⚠ Error en round {round_num + 1}, generando respuesta final...[/dim]")
-            messages.append({"role": "system", "content": "Genera una respuesta final basada en los datos recopilados hasta ahora."})
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-                max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2000")),
-            )
-            return resp.choices[0].message.content or "(error generando respuesta)"
-
-        msg = resp.choices[0].message
-        messages.append(msg)
-
-        # Sin tool calls → respuesta final
-        if not msg.tool_calls:
-            return msg.content or "(sin respuesta)"
-
-        # Ejecutar tool calls
-        for tc in msg.tool_calls:
-            total_tool_calls += 1
-            try:
-                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-            except json.JSONDecodeError:
-                args = {}
-
-            _show_tool_call(tc.function.name, args)
-
-            try:
-                result = execute_tool(db, tc.function.name, args)
-            except Exception as e:
-                result = json.dumps({"error": str(e)})
-
-            _show_tool_result(tc.function.name, result)
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result,
-            })
-
-    # Máximo de rounds alcanzado
-    console.print(f"  [dim]⚠ Máximo de {max_rounds} rounds alcanzado ({total_tool_calls} tool calls)[/dim]")
-    return f"(Agente alcanzó el límite de {max_rounds} rounds. Intenta una pregunta más específica.)"
+    try:
+        return llm.chat_with_tools(
+            messages=messages,
+            tools=TOOLS,
+            system=SYSTEM_PROMPT,
+            max_rounds=6,
+            on_tool_call=on_tool,
+        )
+    except Exception as e:
+        raise
 
 
 # ── Chat loop principal ──────────────────────────────────────────────
 
 
-def run_chat(db: Database, client: OpenAI) -> None:
+def run_chat(db: Database, client=None) -> None:
     """Loop principal del chat agentic."""
-    model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
+    llm = LLMBackend()
+    backend_name = llm.backend
+    model_name = llm.model
 
     print_welcome(
-        "LCDA Searcher — Agente de Investigación",
+        f"LCDA Searcher — Agente de Investigación [{backend_name}/{model_name}]",
         commands=[
             ("/matches", "ver matches temáticos top"),
             ("/perfil <nombre>", "resumen de un investigador"),
@@ -318,7 +265,7 @@ def run_chat(db: Database, client: OpenAI) -> None:
         # ── Ejecutar agente ──
         t0 = time.time()
         try:
-            content = _agent_loop(client, db, model, user_input, historial)
+            content = _agent_loop(llm, db, user_input, historial)
             _render_response(content)
         except Exception as e:
             print_error(str(e))

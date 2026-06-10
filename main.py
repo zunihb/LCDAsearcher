@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -78,11 +79,15 @@ def main() -> int:
 
     # --- Modos de búsqueda / chat (no ejecutan el pipeline) ---
     if args.search or args.chat or args.tui:
-        client = get_llm_client()
-        if not client:
+        backend = os.getenv("LLM_BACKEND", "openai").lower()
+        client = get_llm_client() if backend != "gemini" else None
+        if backend != "gemini" and not client:
             print_error("No se encontró LLM_API_KEY en .env")
             return 1
         if args.search:
+            if not client:
+                print_error("--search requiere LLM_BACKEND=openai con LLM_API_KEY")
+                return 1
             result = search_and_respond(db, client, args.search)
             print_sources(
                 result["keywords_detectadas"],
