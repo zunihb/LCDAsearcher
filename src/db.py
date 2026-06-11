@@ -195,6 +195,8 @@ class Database:
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_keywords_norm ON keywords(keyword_norm)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_keyword_aliases_canonical ON keyword_aliases(canonical)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_anio ON papers(anio)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi)")
 
     def upsert_investigador(
         self,
@@ -237,9 +239,40 @@ class Database:
         openalex_id: str | None = None,
     ) -> int:
         abs_val = abstract.strip() if abstract and abstract.strip() else None
+        doi = doi.strip().lower() if doi and doi.strip() else None
         if doi and not url_doi:
             url_doi = f"https://doi.org/{doi}"
         with self.connect() as conn:
+            # Dedup por DOI cuando existe (más confiable que título o scholar_pub_id)
+            if doi:
+                row = conn.execute(
+                    "SELECT id FROM papers WHERE doi = ?", (doi,)
+                ).fetchone()
+                if row:
+                    conn.execute(
+                        """
+                        UPDATE papers SET
+                            scholar_pub_id=COALESCE(?, scholar_pub_id),
+                            abstract=COALESCE(?, abstract),
+                            anio=COALESCE(?, anio),
+                            venue=COALESCE(NULLIF(?, ''), venue),
+                            citado_por=CASE WHEN ? > 0 THEN ? ELSE citado_por END,
+                            autores_texto=COALESCE(NULLIF(?, ''), autores_texto),
+                            url_scholar=COALESCE(?, url_scholar),
+                            url_pdf=COALESCE(?, url_pdf),
+                            url_doi=COALESCE(?, url_doi),
+                            url_ieee=COALESCE(?, url_ieee),
+                            openalex_id=COALESCE(?, openalex_id)
+                        WHERE id=?
+                        """,
+                        (
+                            scholar_pub_id, abs_val, anio, venue or "", citado_por, citado_por,
+                            autores_texto or "", url_scholar, url_pdf, url_doi, url_ieee,
+                            openalex_id, row["id"],
+                        ),
+                    )
+                    return row["id"]
+
             if scholar_pub_id:
                 row = conn.execute(
                     "SELECT id FROM papers WHERE scholar_pub_id = ?", (scholar_pub_id,)

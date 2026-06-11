@@ -27,13 +27,65 @@ def normalize_text(text: str) -> str:
 def normalize_keyword(text: str) -> str:
     text = normalize_text(text)
     text = text.replace("-", " ")
+
+    # ── Inglés → Español ───────────────────────────────────────────────
     text = re.sub(r"\b(fcs\s*m?pc|fcs-mpc)\b", "control predictivo de conjunto finito", text)
     text = re.sub(r"\b(mpc|model predictive control)\b", "control predictivo", text)
     text = re.sub(r"\b(grid connected|grid-connected)\b", "conectado a red", text)
-    text = re.sub(r"\bphotovoltaic\b", "fotovoltaica", text)
+    text = re.sub(r"\bphotovoltaic(s)?\b", "fotovoltaica", text)
     text = re.sub(r"\bconverter(s)?\b", "convertidor", text)
     text = re.sub(r"\bcontrollers?\b", "control", text)
     text = re.sub(r"\bsystems?\b", "sistema", text)
+    text = re.sub(r"\brenewable energy\b", "energias renovables", text)
+    text = re.sub(r"\bpower electronics?\b", "electronica de potencia", text)
+    text = re.sub(r"\belectric(al)? machines?\b", "maquinas electricas", text)
+    text = re.sub(r"\bwind energy\b", "energia eolica", text)
+    text = re.sub(r"\bsolar energy\b", "energia solar", text)
+    text = re.sub(r"\binduction motors?\b", "motor de induccion", text)
+    text = re.sub(r"\bpermanent magnet\b", "iman permanente", text)
+    text = re.sub(r"\bmatrix converter(s)?\b", "convertidor matricial", text)
+    text = re.sub(r"\bmultilevel (inverter|converter)(s)?\b", "inversor multinivel", text)
+    text = re.sub(r"\bvoltage source inverter(s)?\b", "inversor fuente de voltaje", text)
+    text = re.sub(r"\bcurrent source inverter(s)?\b", "inversor fuente de corriente", text)
+    text = re.sub(r"\bactive power filter(s)?\b", "filtro activo de potencia", text)
+    text = re.sub(r"\bpower factor\b", "factor de potencia", text)
+    text = re.sub(r"\bharmonic(s)?\b", "armonicos", text)
+    text = re.sub(r"\benergy storage\b", "almacenamiento de energia", text)
+    text = re.sub(r"\belectric vehicle(s)?\b", "vehiculo electrico", text)
+    text = re.sub(r"\bdrive(s)?\b", "accionamiento", text)
+    text = re.sub(r"\binverter(s)?\b", "inversor", text)
+    text = re.sub(r"\brectifier(s)?\b", "rectificador", text)
+    text = re.sub(r"\btransformer(s)?\b", "transformador", text)
+
+    # ── Plurales español → singular ────────────────────────────────────
+    # Orden importa: más específico primero
+    text = re.sub(r"\bconvertidores\b", "convertidor", text)
+    text = re.sub(r"\bconversores\b", "conversor", text)
+    text = re.sub(r"\binversores\b", "inversor", text)
+    text = re.sub(r"\brectificadores\b", "rectificador", text)
+    text = re.sub(r"\btransformadores\b", "transformador", text)
+    text = re.sub(r"\baccionamientos\b", "accionamiento", text)
+    text = re.sub(r"\bmotores\b", "motor", text)
+    text = re.sub(r"\bgeneradores\b", "generador", text)
+    text = re.sub(r"\bfiltros\b", "filtro", text)
+    text = re.sub(r"\balgoritmos\b", "algoritmo", text)
+    text = re.sub(r"\bsistemas\b", "sistema", text)
+    text = re.sub(r"\bredes\b", "red", text)
+    text = re.sub(r"\benergias\b", "energia", text)
+    text = re.sub(r"\btopologias\b", "topologia", text)
+    text = re.sub(r"\bestrateg(ias|ia)\b", "estrategia", text)
+    text = re.sub(r"\btecnicas\b", "tecnica", text)
+    text = re.sub(r"\bmetodos\b", "metodo", text)
+    text = re.sub(r"\bmodelos\b", "modelo", text)
+    text = re.sub(r"\bpaneles\b", "panel", text)
+    text = re.sub(r"\bvehiculos\b", "vehiculo", text)
+
+    # ── Abreviaciones comunes ──────────────────────────────────────────
+    text = re.sub(r"\b(dc[ /]dc|cc[ /]cc)\b", "dc dc", text)
+    text = re.sub(r"\b(ac[ /]dc|ca[ /]cc)\b", "ac dc", text)
+    text = re.sub(r"\b(dc[ /]ac|cc[ /]ca)\b", "dc ac", text)
+    text = re.sub(r"\b(ac[ /]ac|ca[ /]ca)\b", "ac ac", text)
+
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -60,42 +112,38 @@ def resolve_keyword_alias(db, keyword: str) -> str:
 
 
 def search_keywords_hybrid(db, term: str, limit: int = 15) -> list[dict[str, Any]]:
-    # Resolver alias antes de tokenizar
     resolved = resolve_keyword_alias(db, term)
     tokens = tokenize_query(resolved)
     if not tokens:
         return []
 
-    aliases = load_keyword_aliases(db)
+    # Agrupar por keyword_norm para eliminar variantes duplicadas
     rows = db.query(
         """
         SELECT
-            COALESCE(k.termino_canonico, k.termino) AS keyword,
-            COALESCE(k.keyword_norm, k.termino_canonico, k.termino) AS keyword_norm,
+            k.keyword_norm AS keyword_norm,
             COUNT(DISTINCT pk.paper_id) AS papers,
             SUM(COALESCE(p.citado_por, 0)) AS citas,
             MAX(p.anio) AS ultimo_anio
         FROM keywords k
         JOIN paper_keywords pk ON k.id = pk.keyword_id
         JOIN papers p ON p.id = pk.paper_id
-        GROUP BY keyword, keyword_norm
+        WHERE k.keyword_norm IS NOT NULL
+        GROUP BY k.keyword_norm
         """
     )
 
     scored: list[dict[str, Any]] = []
     for row in rows:
-        keyword_norm = normalize_keyword(row["keyword_norm"] or row["keyword"])
-        canonical = aliases.get(keyword_norm, keyword_norm)
-        text = f"{keyword_norm} {canonical}"
-        hits = sum(1 for t in tokens if t in text)
+        kn = row["keyword_norm"]
+        hits = sum(1 for t in tokens if t in kn)
         if not hits:
             continue
         common_penalty = 1.0 / max(1.0, (row["papers"] or 1) ** 0.35)
         score = (hits * 2.5) + (row["papers"] or 0) * 0.08 + ((row["citas"] or 0) ** 0.25) + common_penalty
         scored.append({
-            "keyword": row["keyword"],
-            "keyword_norm": keyword_norm,
-            "canonical": canonical,
+            "keyword": kn,
+            "keyword_norm": kn,
             "papers": row["papers"],
             "citas": row["citas"],
             "ultimo_anio": row["ultimo_anio"],

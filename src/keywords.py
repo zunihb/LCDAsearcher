@@ -285,45 +285,45 @@ def normalize_keywords_llm(
     client: OpenAI,
     keywords: list[str],
     idioma: str = "es",
+    batch_size: int = 80,
 ) -> dict[str, str]:
     keywords = [k for k in keywords if _is_valid_keyword(k)]
     if not keywords:
         return {}
 
-    model = os.getenv("LLM_MODEL", "kimi-k2.5")
-    batch = keywords[:80]
-    prompt = f"""Estandariza estas palabras clave en términos canónicos cortos en {idioma}.
+    model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
+    result: dict[str, str] = {}
+
+    for i in range(0, len(keywords), batch_size):
+        batch = keywords[i : i + batch_size]
+        prompt = f"""Estandariza estas palabras clave en términos canónicos cortos en {idioma}.
 Responde ÚNICAMENTE JSON object, sin texto adicional: {{"original": "canonico", ...}}
 
 {batch}"""
-
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": "Responde solo JSON object. Sin explicaciones.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0,
-        max_tokens=2000,
-        timeout=LLM_TIMEOUT,
-    )
-    content = resp.choices[0].message.content or ""
-    match = re.search(r"\{.*\}", content, re.DOTALL)
-    if match:
         try:
-            mapping = json.loads(match.group())
-            if isinstance(mapping, dict):
-                return {
-                    str(k): str(v)
-                    for k, v in mapping.items()
-                    if _is_valid_keyword(str(v))
-                }
-        except json.JSONDecodeError:
-            pass
-    return {k: k for k in keywords}
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "Responde solo JSON object. Sin explicaciones."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+                max_tokens=2000,
+                timeout=LLM_TIMEOUT,
+            )
+            content = resp.choices[0].message.content or ""
+            match = re.search(r"\{.*\}", content, re.DOTALL)
+            if match:
+                mapping = json.loads(match.group())
+                if isinstance(mapping, dict):
+                    for k, v in mapping.items():
+                        if _is_valid_keyword(str(v)):
+                            result[str(k)] = str(v)
+        except Exception:
+            for k in batch:
+                result[k] = k
+
+    return result or {k: k for k in keywords}
 
 
 def _fallback_keywords(titulo: str, abstract: str, n: int = 5) -> list[str]:

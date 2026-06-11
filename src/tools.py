@@ -335,7 +335,7 @@ def _get_researcher_profile(db: Database, name: str) -> dict:
     # Top keywords
     kws = db.query(
         """
-        SELECT COALESCE(k.termino_canonico, k.termino) AS keyword,
+        SELECT k.keyword_norm AS keyword,
                COUNT(DISTINCT p.id) AS papers,
                SUM(COALESCE(p.citado_por, 0)) AS citas
         FROM autorias a
@@ -343,7 +343,7 @@ def _get_researcher_profile(db: Database, name: str) -> dict:
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
         WHERE a.scholar_id = ?
-        GROUP BY keyword ORDER BY papers DESC LIMIT 10
+        GROUP BY k.keyword_norm ORDER BY papers DESC LIMIT 10
         """,
         (sid,),
     )
@@ -390,28 +390,28 @@ def _get_researcher_profile(db: Database, name: str) -> dict:
 
 
 def _search_papers(db: Database, query: str, limit: int = 10, year_from: int | None = None, year_to: int | None = None) -> list[dict]:
+    norm = normalize_keyword(query)
     year_filter = ""
-    params: list[Any] = []
+    year_params: list[Any] = []
 
     if year_from is not None and year_to is not None:
         year_filter = "AND p.anio BETWEEN ? AND ?"
-        params = [f"%{query}%", year_from, year_to, limit]
+        year_params = [year_from, year_to]
     elif year_from is not None:
         year_filter = "AND p.anio >= ?"
-        params = [f"%{query}%", year_from, limit]
+        year_params = [year_from]
     elif year_to is not None:
         year_filter = "AND p.anio <= ?"
-        params = [f"%{query}%", year_to, limit]
-    else:
-        params = [f"%{query}%", limit]
+        year_params = [year_to]
 
+    params: list[Any] = [f"%{norm}%"] + year_params + [limit]
     rows = db.query(
         f"""
-        SELECT p.titulo, p.anio, p.citado_por, p.autores_texto
+        SELECT DISTINCT p.titulo, p.anio, p.citado_por, p.autores_texto
         FROM papers p
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
-        WHERE COALESCE(k.termino_canonico, k.termino) LIKE ?
+        WHERE k.keyword_norm LIKE ?
         {year_filter}
         ORDER BY p.citado_por DESC LIMIT ?
         """,
@@ -419,15 +419,7 @@ def _search_papers(db: Database, query: str, limit: int = 10, year_from: int | N
     )
 
     if not rows:
-        if year_from is not None and year_to is not None:
-            params = [f"%{query}%", year_from, year_to, limit]
-        elif year_from is not None:
-            params = [f"%{query}%", year_from, limit]
-        elif year_to is not None:
-            params = [f"%{query}%", year_to, limit]
-        else:
-            params = [f"%{query}%", limit]
-
+        params = [f"%{norm}%"] + year_params + [limit]
         rows = db.query(
             f"""
             SELECT p.titulo, p.anio, p.citado_por, p.autores_texto
@@ -452,6 +444,7 @@ def _search_papers(db: Database, query: str, limit: int = 10, year_from: int | N
 
 def _get_papers_by_researcher_and_topic(db: Database, topic: str) -> list[dict]:
     """Cuenta papers por investigador para un tema específico."""
+    norm = normalize_keyword(topic)
     rows = db.query(
         """
         SELECT
@@ -465,11 +458,11 @@ def _get_papers_by_researcher_and_topic(db: Database, topic: str) -> list[dict]:
         JOIN papers p ON p.id = a.paper_id
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
-        WHERE COALESCE(k.termino_canonico, k.termino) LIKE ?
+        WHERE k.keyword_norm LIKE ?
         GROUP BY i.scholar_id, i.nombre, i.afiliacion
         ORDER BY papers DESC, citas DESC
         """,
-        (f"%{topic}%",),
+        (f"%{norm}%",),
     )
     return [
         {
@@ -506,18 +499,19 @@ def _get_topic_matches(db: Database, keyword: str | None = None) -> list[dict]:
 
 
 def _search_keywords(db: Database, term: str) -> list[dict]:
+    norm = normalize_keyword(term)
     rows = db.query(
         """
-        SELECT COALESCE(k.termino_canonico, k.termino) AS keyword,
+        SELECT k.keyword_norm AS keyword,
                COUNT(DISTINCT pk.paper_id) AS papers,
                SUM(COALESCE(p.citado_por, 0)) AS citas
         FROM keywords k
         JOIN paper_keywords pk ON k.id = pk.keyword_id
         JOIN papers p ON p.id = pk.paper_id
-        WHERE COALESCE(k.termino_canonico, k.termino) LIKE ?
-        GROUP BY keyword ORDER BY papers DESC LIMIT 15
+        WHERE k.keyword_norm LIKE ?
+        GROUP BY k.keyword_norm ORDER BY papers DESC LIMIT 15
         """,
-        (f"%{term}%",),
+        (f"%{norm}%",),
     )
     return [
         {"keyword": r["keyword"], "papers": r["papers"], "citas": r["citas"]}
@@ -560,6 +554,7 @@ def _search_topic_hybrid(db: Database, term: str, limit: int = 15) -> list[dict]
 
 
 def _get_researchers_by_topic(db: Database, topic: str, limit: int = 15) -> list[dict]:
+    norm = normalize_keyword(topic)
     rows = db.query(
         """
         SELECT
@@ -573,16 +568,12 @@ def _get_researchers_by_topic(db: Database, topic: str, limit: int = 15) -> list
         JOIN papers p ON p.id = a.paper_id
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
-        WHERE (
-            COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
-            OR COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
-            OR COALESCE(k.keyword_norm, k.termino_canonico, k.termino) LIKE ?
-          )
+        WHERE k.keyword_norm LIKE ?
         GROUP BY i.scholar_id, i.nombre, i.afiliacion
         ORDER BY papers DESC, citas DESC
         LIMIT ?
         """,
-        (f"%{topic}%", f"%{normalize_keyword(topic)}%", f"%{normalize_keyword(topic)}%", limit),
+        (f"%{norm}%", limit),
     )
     return [
         {
@@ -602,25 +593,21 @@ def _get_topic_evidence(db: Database, name: str, topic: str, limit: int = 5) -> 
     if not target:
         return [{"error": f"No encontré '{name}'"}]
 
-    topic_norm = normalize_keyword(topic)
+    norm = normalize_keyword(topic)
     rows = db.query(
         """
-        SELECT p.titulo, p.anio, p.citado_por, p.abstract, p.autores_texto,
-               COALESCE(k.termino_canonico, k.termino, k.keyword_norm) AS keyword
+        SELECT DISTINCT p.titulo, p.anio, p.citado_por, p.abstract, p.autores_texto,
+               k.keyword_norm AS keyword
         FROM papers p
         JOIN autorias a ON p.id = a.paper_id
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
         WHERE a.scholar_id = ?
-          AND (
-            COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
-            OR COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
-            OR COALESCE(k.keyword_norm, k.termino_canonico, k.termino) LIKE ?
-          )
+          AND k.keyword_norm LIKE ?
         ORDER BY p.citado_por DESC, p.anio DESC
         LIMIT ?
         """,
-        (target["scholar_id"], f"%{topic}%", f"%{topic_norm}%", f"%{topic_norm}%", limit),
+        (target["scholar_id"], f"%{norm}%", limit),
     )
     return [
         {
@@ -649,7 +636,7 @@ def _compare_researchers(db: Database, names: list[str], topic: str | None = Non
     for inv in targets:
         rows = db.query(
             """
-            SELECT COALESCE(k.termino_canonico, k.termino) AS keyword,
+            SELECT k.keyword_norm AS keyword,
                    COUNT(DISTINCT p.id) AS papers,
                    SUM(COALESCE(p.citado_por, 0)) AS citas,
                    MAX(p.anio) AS ultimo_anio
@@ -658,7 +645,7 @@ def _compare_researchers(db: Database, names: list[str], topic: str | None = Non
             JOIN paper_keywords pk ON pk.paper_id = p.id
             JOIN keywords k ON k.id = pk.keyword_id
             WHERE a.scholar_id = ?
-            GROUP BY keyword
+            GROUP BY k.keyword_norm
             ORDER BY papers DESC, citas DESC
             LIMIT 10
             """,
@@ -667,10 +654,8 @@ def _compare_researchers(db: Database, names: list[str], topic: str | None = Non
         if topic:
             topic_norm = normalize_keyword(topic)
             topic_words = set(topic_norm.split())
-            # Marcar keywords que matchean el tema, pero mostrar todas
             for r in rows:
-                kw_norm = normalize_keyword(r["keyword"])
-                r["match_tema"] = any(w in kw_norm for w in topic_words)
+                r["match_tema"] = any(w in r["keyword"] for w in topic_words)
             rows.sort(key=lambda r: (r.get("match_tema", False), r["papers"]), reverse=True)
         result.append({"nombre": inv["nombre"], "keywords": rows})
     return {"investigadores": result}
@@ -681,31 +666,37 @@ def _get_trending_topics(db: Database, year_from: int = 2021, year_to: int | Non
     rows = db.query(
         """
         SELECT
-            LOWER(COALESCE(k.keyword_norm, k.termino_canonico, k.termino)) AS keyword,
+            k.keyword_norm AS keyword,
             p.anio,
-            COUNT(*) AS conteo
+            COUNT(DISTINCT p.id) AS conteo
         FROM papers p
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
         WHERE p.anio BETWEEN ? AND ?
-        GROUP BY keyword, p.anio
-        ORDER BY keyword, p.anio
+          AND k.keyword_norm IS NOT NULL
+        GROUP BY k.keyword_norm, p.anio
+        ORDER BY k.keyword_norm, p.anio
         """,
         (year_from, year_to),
     )
-    by_kw: dict[str, list[int]] = {}
+    by_kw: dict[str, dict[int, int]] = {}
     for r in rows:
-        by_kw.setdefault(r["keyword"], [])
-    for kw in by_kw:
-        serie = [next((r["conteo"] for r in rows if r["keyword"] == kw and r["anio"] == y), 0) for y in range(year_from, year_to + 1)]
-        by_kw[kw] = serie
+        kw = r["keyword"]
+        by_kw.setdefault(kw, {})[r["anio"]] = r["conteo"]
 
     results = []
-    for kw, serie in by_kw.items():
+    years = list(range(year_from, year_to + 1))
+    for kw, year_counts in by_kw.items():
+        serie = [year_counts.get(y, 0) for y in years]
         growth = _slope([float(v) for v in serie])
         total = sum(serie)
         if total <= 0:
             continue
-        results.append({"keyword": kw, "papers": total, "crecimiento": round(growth, 4), "serie": dict(zip(range(year_from, year_to + 1), serie))})
+        results.append({
+            "keyword": kw,
+            "papers": total,
+            "crecimiento": round(growth, 4),
+            "serie": dict(zip(years, serie)),
+        })
     results.sort(key=lambda r: (r["crecimiento"], r["papers"]), reverse=True)
     return results[:limit]
