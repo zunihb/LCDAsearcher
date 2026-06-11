@@ -447,8 +447,8 @@ def _researchers_by_topic(db: Database, topic: str, limit: int = 15) -> list[dic
         {
             "investigador": r["nombre"],
             "afiliacion": r.get("afiliacion", ""),
-            "papers": r["papers"],
-            "citas": r["citas"],
+            "papers_en_tema": r["papers"],
+            "citas_en_tema": r["citas"],
             "ultimo_anio": r["ultimo_anio"],
         }
         for r in rows
@@ -558,12 +558,12 @@ def _find_collaborations(db: Database, keyword: str | None = None) -> list[dict]
 
     return [
         {
-            "keyword": m["keyword"],
+            "tema": m["keyword"],
             "investigador_1": m["investigador_1"],
-            "papers_inv1": m["papers_inv1"],
+            "papers_en_tema_inv1": m["papers_inv1"],
             "investigador_2": m["investigador_2"],
-            "papers_inv2": m["papers_inv2"],
-            "potencial": m["potencial"],
+            "papers_en_tema_inv2": m["papers_inv2"],
+            "potencial_colaboracion": m["potencial"],
         }
         for m in matches[:15]
     ]
@@ -604,7 +604,16 @@ def _compare_researchers(db: Database, names: list[str], topic: str | None = Non
             for r in rows:
                 r["match_tema"] = any(w in r["keyword"] for w in topic_words)
             rows.sort(key=lambda r: (r.get("match_tema", False), r["papers"]), reverse=True)
-        result.append({"nombre": inv["nombre"], "keywords": rows})
+        kws_clean = [
+            {
+                "tema": r["keyword"],
+                "papers_en_tema": r["papers"],
+                "citas_en_tema": r["citas"],
+                "ultimo_anio": r["ultimo_anio"],
+            }
+            for r in rows
+        ]
+        result.append({"nombre": inv["nombre"], "temas": kws_clean})
     return {"investigadores": result}
 
 
