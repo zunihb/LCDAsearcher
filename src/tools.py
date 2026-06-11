@@ -18,6 +18,7 @@ from src.db import Database
 from src.data_quality import get_data_quality_report, get_suspicious_records
 from src.topic_search import search_keywords_hybrid, normalize_keyword
 from src.trends import _slope
+from src.search import _topic_potential
 
 
 # ── Definiciones de tools (JSON Schema) ──────────────────────────────
@@ -489,13 +490,70 @@ def _topic_evidence(db: Database, name: str, topic: str, limit: int = 5) -> list
 
 
 def _find_collaborations(db: Database, keyword: str | None = None) -> list[dict]:
-    from src.search import _get_cached_matches
-
-    matches = _get_cached_matches(db)
+    import math
+    from itertools import combinations
 
     if keyword:
-        kw_lower = keyword.lower()
-        matches = [m for m in matches if kw_lower in m["keyword"].lower()]
+        # Consulta directa sobre el tema pedido — la caché solo guarda top-30 global
+        norm = normalize_keyword(keyword)
+        rows = db.query(
+            """
+            SELECT
+                i.scholar_id, i.nombre,
+                COALESCE(k.termino_canonico, k.termino) AS kw_display,
+                k.keyword_norm AS kw_norm,
+                COUNT(DISTINCT p.id) AS papers,
+                SUM(COALESCE(p.citado_por, 0)) AS citas,
+                MAX(p.anio) AS ultimo_anio
+            FROM investigadores i
+            JOIN autorias a ON i.scholar_id = a.scholar_id
+            JOIN papers p ON p.id = a.paper_id
+            JOIN paper_keywords pk ON pk.paper_id = p.id
+            JOIN keywords k ON k.id = pk.keyword_id
+            WHERE k.keyword_norm LIKE ?
+            GROUP BY i.scholar_id, k.keyword_norm
+            HAVING papers >= 2
+            ORDER BY papers DESC, citas DESC
+            """,
+            (f"%{norm}%",),
+        )
+        by_kw: dict[str, list] = {}
+        for r in rows:
+            by_kw.setdefault(r["kw_norm"], []).append(r)
+
+        matches = []
+        for kw_norm_key, inv_rows in by_kw.items():
+            if len(inv_rows) < 2:
+                continue
+            kw_display = inv_rows[0]["kw_display"]
+            for left, right in combinations(inv_rows, 2):
+                floor_shared = min(left["papers"], right["papers"])
+                total_citas = (left["citas"] or 0) + (right["citas"] or 0)
+                score = floor_shared * 5.0 + (left["papers"] + right["papers"]) * 0.25 + math.log1p(total_citas) * 0.5
+                matches.append({
+                    "keyword": kw_display,
+                    "investigador_1": left["nombre"],
+                    "papers_inv1": left["papers"],
+                    "investigador_2": right["nombre"],
+                    "papers_inv2": right["papers"],
+                    "potencial": _topic_potential(score),
+                    "score": score,
+                })
+        matches.sort(key=lambda r: r["score"], reverse=True)
+    else:
+        from src.search import _get_cached_matches
+        matches = [
+            {
+                "keyword": m["keyword"],
+                "investigador_1": m["investigador_1"],
+                "papers_inv1": m["papers_inv1"],
+                "investigador_2": m["investigador_2"],
+                "papers_inv2": m["papers_inv2"],
+                "potencial": m["potencial"],
+                "score": m["score"],
+            }
+            for m in _get_cached_matches(db)
+        ]
 
     return [
         {
