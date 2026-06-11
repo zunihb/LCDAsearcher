@@ -16,7 +16,7 @@ from typing import Any
 
 from src.db import Database
 from src.data_quality import get_data_quality_report, get_suspicious_records
-from src.topic_search import search_keywords_hybrid, normalize_keyword
+from src.topic_search import search_keywords_hybrid, normalize_keyword, GENERIC_KEYWORDS
 from src.trends import _slope
 from src.search import _topic_potential
 
@@ -316,10 +316,11 @@ def _get_researcher_profile(db: Database, name: str) -> dict:
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
         WHERE a.scholar_id = ?
-        GROUP BY k.keyword_norm ORDER BY papers DESC LIMIT 10
+        GROUP BY k.keyword_norm ORDER BY papers DESC LIMIT 20
         """,
         (sid,),
     )
+    kws = [k for k in kws if k["keyword"] not in GENERIC_KEYWORDS][:10]
 
     recent = db.query(
         """
@@ -638,6 +639,8 @@ def _get_trending_topics(
     results = []
     years = list(range(year_from, year_to + 1))
     for kw, year_counts in by_kw.items():
+        if kw in GENERIC_KEYWORDS:
+            continue
         serie = [year_counts.get(y, 0) for y in years]
         growth = _slope([float(v) for v in serie])
         total = sum(serie)

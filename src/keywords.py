@@ -228,14 +228,20 @@ def extract_keywords_llm(
         cuerpo += "\n(Sin resumen; infiere palabras clave solo del título.)"
 
     system = (
-        "Eres un extractor de palabras clave bibliográficas. "
+        "Eres un extractor de palabras clave bibliográficas especializado en electrónica de potencia. "
         f"Responde en json con exactamente {n} strings en {idioma}. "
         'Formato: {"keywords": ["kw1", "kw2", ...]}. '
-        "Sin explicaciones ni razonamiento. Cada keyword: 1-4 palabras, término técnico conciso."
+        "Sin explicaciones ni razonamiento. Cada keyword: 1-5 palabras, término técnico específico. "
+        "PROHIBIDO usar términos genéricos del campo como: 'electrónica de potencia', "
+        "'ingeniería eléctrica', 'conversión de energía', 'sistemas de potencia', "
+        "'eficiencia energética', 'sistema de control', 'algoritmo de control', "
+        "'energía renovable', 'control digital', 'control avanzado'. "
+        "Usa en su lugar técnicas, topologías, componentes y aplicaciones concretas."
     )
     user = (
-        f"Extrae {n} palabras clave técnicas en {idioma} para este artículo "
-        "de ingeniería eléctrica / electrónica de potencia.\n"
+        f"Extrae {n} palabras clave técnicas ESPECÍFICAS en {idioma} para este artículo.\n"
+        "Enfócate en: topología del convertidor, técnica de control, tipo de máquina, "
+        "aplicación concreta, magnitudes controladas, método de modulación.\n"
         "Si el título está en inglés, traduce los términos al español.\n\n"
         f"{cuerpo}"
     )
