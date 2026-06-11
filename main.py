@@ -14,13 +14,13 @@ from dotenv import load_dotenv
 from src.abstracts import run_abstracts
 from src.chat import run_chat
 from src.citations import run_citations
-from src.cli_output import console, print_error, print_response, print_sources
+from src.cli_output import console, print_error, print_response
 from src.db import Database
 from src.extract import run_extract
 from src.graph import run_graph
 from src.keywords import run_keywords
 from src.report import run_report
-from src.search import get_llm_client, search_and_respond
+from src.search import get_llm_client
 from src.topic_search import seed_default_keyword_aliases
 from src.trends import run_trends
 
@@ -93,16 +93,11 @@ def main() -> int:
             print_error("No se encontró LLM_API_KEY en .env")
             return 1
         if args.search:
-            if not client:
-                print_error("--search requiere LLM_BACKEND=openai con LLM_API_KEY")
-                return 1
-            result = search_and_respond(db, client, args.search)
-            print_sources(
-                result["keywords_detectadas"],
-                result["papers_encontrados"],
-                result["matches_relevantes"],
-            )
-            print_response(result["respuesta"], result.get("reasoning"))
+            from src.chat import _agent_loop
+            from src.llm_backend import LLMBackend
+            llm = LLMBackend()
+            response = _agent_loop(llm, db, args.search, historial=[])
+            print_response(response, None)
             return 0
         if args.tui:
             from src.tui import LCDATui
