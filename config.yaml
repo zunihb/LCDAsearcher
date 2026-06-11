@@ -68,7 +68,7 @@ scholarly:
 # Abstracts, DOI, URLs y autores por paper
 abstracts:
   enabled: true
-  source: openalex          # openalex (rápido) | scholarly (lento, más completo)
+  source: ieee-pw           # ieee-pw (principal) | openalex | scholarly | scholarly-pw | multisource
   pause_sec: 0.35           # entre requests OpenAlex
   scholar_pause_min: 2
   scholar_pause_max: 4

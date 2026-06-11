@@ -24,7 +24,7 @@ No es solo un buscador: es un **grafo de redes semánticas** que visualiza cómo
 ```
 Scholar IDs → extract.py (scraping + caché JSON) → SQLite
                 ↓
-         abstracts.py (OpenAlex API: abstract, DOI, autores, URLs)
+          abstracts_ieee_pw.py (Playwright IEEE Xplore: abstract, DOI, venue, PDF)
                 ↓
          citations.py (top-5 papers, ~50 citantes c/u)
                 ↓
@@ -60,12 +60,13 @@ Estas condiciones fueron acordadas en el diseño del piloto y **deben respetarse
 | Capa | Tecnología | Rol |
 |------|------------|-----|
 | 1 | **Google Scholar** (`scholarly`) | Scraping — lista papers, citas, coautores perfil |
-| 2 | **OpenAlex** (API) | Abstract, DOI, autores/afiliaciones, URLs |
+| 2 | **IEEE Xplore Playwright** | Abstract, DOI, venue, URLs, PDF cuando existe |
 | 3 | **IEEE Xplore** (browser + suscripción) | PDF para RAG — ver `docs/IEEE_PDF.md` |
 
 - Scholar: **no hay API oficial**; caché JSON en `data/raw/<scholar_id>.json`.
-- OpenAlex: API gratuita; `openalex_mailto` en `config.yaml`.
-- IEEE: **no pegar credenciales**; login institucional en navegador.
+- OpenAlex: API gratuita; queda como respaldo.
+- IEEE Playwright: no requiere API key; navega la ficha pública de IEEE Xplore.
+- IEEE PDFs: **no pegar credenciales**; login institucional en navegador.
 
 ### Persistencia
 
@@ -157,7 +158,7 @@ python main.py
 ### Opciones CLI
 
 ```bash
-python main.py --only-abstracts    # Solo OpenAlex: abstract, DOI, autores (~2 min)
+ python main.py --only-abstracts    # Solo abstracts (por defecto IEEE Playwright)
 python main.py --skip-extract      # Usar caché/BD existente
 python main.py --skip-abstracts    # Omitir paso OpenAlex
 python main.py --skip-citations    # Omitir citantes Scholar

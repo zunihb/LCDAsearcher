@@ -12,6 +12,9 @@ from datetime import datetime
 from typing import Any
 
 from src.db import Database
+from src.data_quality import get_data_quality_report, get_suspicious_records
+from src.topic_search import search_keywords_hybrid, tokenize_query, normalize_keyword
+from src.trends import _slope
 
 
 # ── Definiciones de tools (JSON Schema) ──────────────────────────────
@@ -73,6 +76,14 @@ TOOLS: list[dict[str, Any]] = [
                     "limit": {
                         "type": "integer",
                         "description": "Número máximo de papers a retornar (default: 10)",
+                    },
+                    "year_from": {
+                        "type": "integer",
+                        "description": "Año mínimo (ej: 2024). Úsalo si el usuario menciona un año o período.",
+                    },
+                    "year_to": {
+                        "type": "integer",
+                        "description": "Año máximo (ej: 2026). Úsalo si el usuario menciona un año o período.",
                     },
                 },
                 "required": ["query"],
@@ -142,6 +153,105 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_data_quality_report",
+            "description": "Retorna un reporte de calidad de datos: cobertura de abstracts, DOI duplicados, OpenAlex duplicados, keywords fragmentadas y papers sospechosos.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_suspicious_records",
+            "description": "Lista papers sospechosos o incompletos para revisión manual.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Máximo de registros a retornar (default: 50)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_topic_hybrid",
+            "description": "Busca un tema con aliases, normalización y ranking por frecuencia/citas/recencia. Mejor que LIKE.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string", "description": "Tema a buscar"},
+                    "limit": {"type": "integer", "description": "Máximo de resultados (default: 15)"},
+                },
+                "required": ["term"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_researchers_by_topic",
+            "description": "Devuelve investigadores ordenados por actividad en un tema.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Tema a consultar"},
+                    "limit": {"type": "integer", "description": "Máximo de resultados (default: 15)"},
+                },
+                "required": ["topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_topic_evidence",
+            "description": "Devuelve papers que justifican que un investigador trabaja en un tema.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Nombre o parte del nombre del investigador"},
+                    "topic": {"type": "string", "description": "Tema a evidenciar"},
+                    "limit": {"type": "integer", "description": "Máximo de papers (default: 5)"},
+                },
+                "required": ["name", "topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_researchers",
+            "description": "Compara dos o más investigadores por temas, papers y actividad reciente.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+                    "topic": {"type": "string", "description": "Tema opcional para enfocar la comparación"},
+                },
+                "required": ["names"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_trending_topics",
+            "description": "Devuelve temas en tendencia dentro de la base usando series temporales internas.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "year_from": {"type": "integer", "description": "Año inicial (default: 2021)"},
+                    "year_to": {"type": "integer", "description": "Año final (default: actual)"},
+                    "limit": {"type": "integer", "description": "Máximo de resultados (default: 15)"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -154,11 +264,18 @@ def execute_tool(db: Database, name: str, arguments: dict[str, Any]) -> str:
         "get_current_date": _get_current_date,
         "list_researchers": lambda db, args: _list_researchers(db),
         "get_researcher_profile": lambda db, args: _get_researcher_profile(db, args["name"]),
-        "search_papers": lambda db, args: _search_papers(db, args["query"], args.get("limit", 10)),
+        "search_papers": lambda db, args: _search_papers(db, args["query"], args.get("limit", 10), args.get("year_from"), args.get("year_to")),
         "get_papers_by_researcher_and_topic": lambda db, args: _get_papers_by_researcher_and_topic(db, args["topic"]),
         "get_topic_matches": lambda db, args: _get_topic_matches(db, args.get("keyword")),
         "search_keywords": lambda db, args: _search_keywords(db, args["term"]),
         "get_db_stats": lambda db, args: _get_db_stats(db),
+        "get_data_quality_report": lambda db, args: _get_data_quality_report(db),
+        "get_suspicious_records": lambda db, args: _get_suspicious_records(db, args.get("limit", 50)),
+        "search_topic_hybrid": lambda db, args: _search_topic_hybrid(db, args["term"], args.get("limit", 15)),
+        "get_researchers_by_topic": lambda db, args: _get_researchers_by_topic(db, args["topic"], args.get("limit", 15)),
+        "get_topic_evidence": lambda db, args: _get_topic_evidence(db, args["name"], args["topic"], args.get("limit", 5)),
+        "compare_researchers": lambda db, args: _compare_researchers(db, args["names"], args.get("topic")),
+        "get_trending_topics": lambda db, args: _get_trending_topics(db, args.get("year_from", 2021), args.get("year_to", datetime.now().year), args.get("limit", 15)),
     }
 
     handler = handlers.get(name)
@@ -272,30 +389,54 @@ def _get_researcher_profile(db: Database, name: str) -> dict:
     }
 
 
-def _search_papers(db: Database, query: str, limit: int = 10) -> list[dict]:
-    # Buscar por keyword exacta primero
+def _search_papers(db: Database, query: str, limit: int = 10, year_from: int | None = None, year_to: int | None = None) -> list[dict]:
+    year_filter = ""
+    params: list[Any] = []
+
+    if year_from is not None and year_to is not None:
+        year_filter = "AND p.anio BETWEEN ? AND ?"
+        params = [f"%{query}%", year_from, year_to, limit]
+    elif year_from is not None:
+        year_filter = "AND p.anio >= ?"
+        params = [f"%{query}%", year_from, limit]
+    elif year_to is not None:
+        year_filter = "AND p.anio <= ?"
+        params = [f"%{query}%", year_to, limit]
+    else:
+        params = [f"%{query}%", limit]
+
     rows = db.query(
-        """
+        f"""
         SELECT p.titulo, p.anio, p.citado_por, p.autores_texto
         FROM papers p
         JOIN paper_keywords pk ON pk.paper_id = p.id
         JOIN keywords k ON k.id = pk.keyword_id
         WHERE COALESCE(k.termino_canonico, k.termino) LIKE ?
+        {year_filter}
         ORDER BY p.citado_por DESC LIMIT ?
         """,
-        (f"%{query}%", limit),
+        tuple(params),
     )
 
     if not rows:
-        # Fallback: buscar por título
+        if year_from is not None and year_to is not None:
+            params = [f"%{query}%", year_from, year_to, limit]
+        elif year_from is not None:
+            params = [f"%{query}%", year_from, limit]
+        elif year_to is not None:
+            params = [f"%{query}%", year_to, limit]
+        else:
+            params = [f"%{query}%", limit]
+
         rows = db.query(
-            """
+            f"""
             SELECT p.titulo, p.anio, p.citado_por, p.autores_texto
             FROM papers p
             WHERE p.titulo LIKE ?
+            {year_filter}
             ORDER BY p.citado_por DESC LIMIT ?
             """,
-            (f"%{query}%", limit),
+            tuple(params),
         )
 
     return [
@@ -404,3 +545,167 @@ def _get_db_stats(db: Database) -> dict:
         "autorias": s["autorias"],
         "rango_anios": f"{s['anio_min']}-{s['anio_max']}",
     }
+
+
+def _get_data_quality_report(db: Database) -> dict:
+    return get_data_quality_report(db)
+
+
+def _get_suspicious_records(db: Database, limit: int = 50) -> list[dict]:
+    return get_suspicious_records(db, limit=limit)
+
+
+def _search_topic_hybrid(db: Database, term: str, limit: int = 15) -> list[dict]:
+    return search_keywords_hybrid(db, term, limit=limit)
+
+
+def _get_researchers_by_topic(db: Database, topic: str, limit: int = 15) -> list[dict]:
+    rows = db.query(
+        """
+        SELECT
+            i.nombre,
+            i.afiliacion,
+            COUNT(DISTINCT p.id) AS papers,
+            SUM(COALESCE(p.citado_por, 0)) AS citas,
+            MAX(p.anio) AS ultimo_anio
+        FROM investigadores i
+        JOIN autorias a ON i.scholar_id = a.scholar_id
+        JOIN papers p ON p.id = a.paper_id
+        JOIN paper_keywords pk ON pk.paper_id = p.id
+        JOIN keywords k ON k.id = pk.keyword_id
+        WHERE (
+            COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
+            OR COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
+            OR COALESCE(k.keyword_norm, k.termino_canonico, k.termino) LIKE ?
+          )
+        GROUP BY i.scholar_id, i.nombre, i.afiliacion
+        ORDER BY papers DESC, citas DESC
+        LIMIT ?
+        """,
+        (f"%{topic}%", f"%{normalize_keyword(topic)}%", f"%{normalize_keyword(topic)}%", limit),
+    )
+    return [
+        {
+            "investigador": r["nombre"],
+            "afiliacion": r.get("afiliacion", ""),
+            "papers": r["papers"],
+            "citas": r["citas"],
+            "ultimo_anio": r["ultimo_anio"],
+        }
+        for r in rows
+    ]
+
+
+def _get_topic_evidence(db: Database, name: str, topic: str, limit: int = 5) -> list[dict]:
+    invs = db.get_investigadores()
+    target = next((inv for inv in invs if name.lower() in inv["nombre"].lower()), None)
+    if not target:
+        return [{"error": f"No encontré '{name}'"}]
+
+    topic_norm = normalize_keyword(topic)
+    rows = db.query(
+        """
+        SELECT p.titulo, p.anio, p.citado_por, p.abstract, p.autores_texto,
+               COALESCE(k.termino_canonico, k.termino, k.keyword_norm) AS keyword
+        FROM papers p
+        JOIN autorias a ON p.id = a.paper_id
+        JOIN paper_keywords pk ON pk.paper_id = p.id
+        JOIN keywords k ON k.id = pk.keyword_id
+        WHERE a.scholar_id = ?
+          AND (
+            COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
+            OR COALESCE(k.termino_canonico, k.termino, k.keyword_norm) LIKE ?
+            OR COALESCE(k.keyword_norm, k.termino_canonico, k.termino) LIKE ?
+          )
+        ORDER BY p.citado_por DESC, p.anio DESC
+        LIMIT ?
+        """,
+        (target["scholar_id"], f"%{topic}%", f"%{topic_norm}%", f"%{topic_norm}%", limit),
+    )
+    return [
+        {
+            "titulo": r["titulo"],
+            "anio": r["anio"],
+            "citas": r["citado_por"],
+            "keyword": r["keyword"],
+            "autores": r.get("autores_texto", ""),
+            "abstract": (r.get("abstract") or "")[:300],
+        }
+        for r in rows
+    ]
+
+
+def _compare_researchers(db: Database, names: list[str], topic: str | None = None) -> dict:
+    invs = db.get_investigadores()
+    targets = []
+    for n in names:
+        inv = next((i for i in invs if n.lower() in i["nombre"].lower()), None)
+        if inv:
+            targets.append(inv)
+    if len(targets) < 2:
+        return {"error": "Necesito al menos dos investigadores encontrados"}
+
+    result = []
+    for inv in targets:
+        rows = db.query(
+            """
+            SELECT COALESCE(k.termino_canonico, k.termino) AS keyword,
+                   COUNT(DISTINCT p.id) AS papers,
+                   SUM(COALESCE(p.citado_por, 0)) AS citas,
+                   MAX(p.anio) AS ultimo_anio
+            FROM autorias a
+            JOIN papers p ON p.id = a.paper_id
+            JOIN paper_keywords pk ON pk.paper_id = p.id
+            JOIN keywords k ON k.id = pk.keyword_id
+            WHERE a.scholar_id = ?
+            GROUP BY keyword
+            ORDER BY papers DESC, citas DESC
+            LIMIT 10
+            """,
+            (inv["scholar_id"],),
+        )
+        if topic:
+            topic_norm = normalize_keyword(topic)
+            topic_words = set(topic_norm.split())
+            # Marcar keywords que matchean el tema, pero mostrar todas
+            for r in rows:
+                kw_norm = normalize_keyword(r["keyword"])
+                r["match_tema"] = any(w in kw_norm for w in topic_words)
+            rows.sort(key=lambda r: (r.get("match_tema", False), r["papers"]), reverse=True)
+        result.append({"nombre": inv["nombre"], "keywords": rows})
+    return {"investigadores": result}
+
+
+def _get_trending_topics(db: Database, year_from: int = 2021, year_to: int | None = None, limit: int = 15) -> list[dict]:
+    year_to = year_to or datetime.now().year
+    rows = db.query(
+        """
+        SELECT
+            LOWER(COALESCE(k.keyword_norm, k.termino_canonico, k.termino)) AS keyword,
+            p.anio,
+            COUNT(*) AS conteo
+        FROM papers p
+        JOIN paper_keywords pk ON pk.paper_id = p.id
+        JOIN keywords k ON k.id = pk.keyword_id
+        WHERE p.anio BETWEEN ? AND ?
+        GROUP BY keyword, p.anio
+        ORDER BY keyword, p.anio
+        """,
+        (year_from, year_to),
+    )
+    by_kw: dict[str, list[int]] = {}
+    for r in rows:
+        by_kw.setdefault(r["keyword"], [])
+    for kw in by_kw:
+        serie = [next((r["conteo"] for r in rows if r["keyword"] == kw and r["anio"] == y), 0) for y in range(year_from, year_to + 1)]
+        by_kw[kw] = serie
+
+    results = []
+    for kw, serie in by_kw.items():
+        growth = _slope([float(v) for v in serie])
+        total = sum(serie)
+        if total <= 0:
+            continue
+        results.append({"keyword": kw, "papers": total, "crecimiento": round(growth, 4), "serie": dict(zip(range(year_from, year_to + 1), serie))})
+    results.sort(key=lambda r: (r["crecimiento"], r["papers"]), reverse=True)
+    return results[:limit]

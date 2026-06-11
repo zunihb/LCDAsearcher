@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS paper_autores (
     afiliacion TEXT,
     orden INTEGER DEFAULT 0,
     openalex_author_id TEXT,
+    orcid_id TEXT,
+    orcid_url TEXT,
     FOREIGN KEY (paper_id) REFERENCES papers(id),
     UNIQUE(paper_id, nombre)
 );
@@ -60,7 +62,15 @@ CREATE TABLE IF NOT EXISTS autorias (
 CREATE TABLE IF NOT EXISTS keywords (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     termino TEXT NOT NULL UNIQUE,
-    termino_canonico TEXT
+    termino_canonico TEXT,
+    keyword_norm TEXT
+);
+
+CREATE TABLE IF NOT EXISTS keyword_aliases (
+    alias TEXT PRIMARY KEY,
+    canonical TEXT NOT NULL,
+    fuente TEXT DEFAULT 'manual',
+    creado_en TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS paper_keywords (
@@ -169,6 +179,22 @@ class Database:
         ]:
             if col not in cols:
                 conn.execute(f"ALTER TABLE papers ADD COLUMN {col} {typ}")
+
+        kw_cols = {r[1] for r in conn.execute("PRAGMA table_info(keywords)").fetchall()}
+        if "keyword_norm" not in kw_cols:
+            conn.execute("ALTER TABLE keywords ADD COLUMN keyword_norm TEXT")
+
+        pa_cols = {r[1] for r in conn.execute("PRAGMA table_info(paper_autores)").fetchall()}
+        for col, typ in [("orcid_id", "TEXT"), ("orcid_url", "TEXT")]:
+            if col not in pa_cols:
+                conn.execute(f"ALTER TABLE paper_autores ADD COLUMN {col} {typ}")
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS keyword_aliases (alias TEXT PRIMARY KEY, canonical TEXT NOT NULL, fuente TEXT DEFAULT 'manual', creado_en TEXT DEFAULT (datetime('now')) )"
+        )
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_keywords_norm ON keywords(keyword_norm)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_keyword_aliases_canonical ON keyword_aliases(canonical)")
 
     def upsert_investigador(
         self,
@@ -292,18 +318,22 @@ class Database:
         afiliacion: str | None = None,
         orden: int = 0,
         openalex_author_id: str | None = None,
+        orcid_id: str | None = None,
+        orcid_url: str | None = None,
     ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO paper_autores (paper_id, nombre, afiliacion, orden, openalex_author_id)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO paper_autores (paper_id, nombre, afiliacion, orden, openalex_author_id, orcid_id, orcid_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(paper_id, nombre) DO UPDATE SET
                     afiliacion = COALESCE(excluded.afiliacion, paper_autores.afiliacion),
                     orden = excluded.orden,
-                    openalex_author_id = COALESCE(excluded.openalex_author_id, paper_autores.openalex_author_id)
+                    openalex_author_id = COALESCE(excluded.openalex_author_id, paper_autores.openalex_author_id),
+                    orcid_id = COALESCE(excluded.orcid_id, paper_autores.orcid_id),
+                    orcid_url = COALESCE(excluded.orcid_url, paper_autores.orcid_url)
                 """,
-                (paper_id, nombre, afiliacion, orden, openalex_author_id),
+                (paper_id, nombre, afiliacion, orden, openalex_author_id, orcid_id, orcid_url),
             )
 
     def get_papers_sin_abstract(self) -> list[dict[str, Any]]:
@@ -360,15 +390,19 @@ class Database:
             )
 
     def upsert_keyword(self, termino: str, termino_canonico: str | None = None) -> int:
+        from src.topic_search import normalize_keyword
+
+        norm = normalize_keyword(termino)
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO keywords (termino, termino_canonico)
-                VALUES (?, ?)
+                INSERT INTO keywords (termino, termino_canonico, keyword_norm)
+                VALUES (?, ?, ?)
                 ON CONFLICT(termino) DO UPDATE SET
-                    termino_canonico = COALESCE(excluded.termino_canonico, keywords.termino_canonico)
+                    termino_canonico = COALESCE(excluded.termino_canonico, keywords.termino_canonico),
+                    keyword_norm = COALESCE(excluded.keyword_norm, keywords.keyword_norm)
                 """,
-                (termino, termino_canonico or termino),
+                (termino, termino_canonico or termino, norm),
             )
             row = conn.execute("SELECT id FROM keywords WHERE termino = ?", (termino,)).fetchone()
             return row["id"]
@@ -384,17 +418,21 @@ class Database:
         """Persiste keywords de un paper en una sola transacción (reanudable 1 a 1)."""
         if not keywords:
             return
+        from src.topic_search import normalize_keyword
+
         with self._write_lock:
             with self.connect() as conn:
                 for kw in keywords:
+                    norm = normalize_keyword(kw)
                     conn.execute(
                         """
-                        INSERT INTO keywords (termino, termino_canonico)
-                        VALUES (?, ?)
+                        INSERT INTO keywords (termino, termino_canonico, keyword_norm)
+                        VALUES (?, ?, ?)
                         ON CONFLICT(termino) DO UPDATE SET
-                            termino_canonico = COALESCE(keywords.termino_canonico, excluded.termino)
+                            termino_canonico = COALESCE(keywords.termino_canonico, excluded.termino),
+                            keyword_norm = COALESCE(excluded.keyword_norm, keywords.keyword_norm)
                         """,
-                        (kw, kw),
+                        (kw, kw, norm),
                     )
                     row = conn.execute(
                         "SELECT id FROM keywords WHERE termino = ?", (kw,)
@@ -410,6 +448,26 @@ class Database:
                 "UPDATE keywords SET termino_canonico = ? WHERE id = ?",
                 (termino_canonico, keyword_id),
             )
+
+    def upsert_keyword_alias(self, alias: str, canonical: str, fuente: str = "manual") -> None:
+        from src.topic_search import normalize_keyword
+
+        alias_norm = normalize_keyword(alias)
+        canonical_norm = normalize_keyword(canonical)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO keyword_aliases (alias, canonical, fuente)
+                VALUES (?, ?, ?)
+                ON CONFLICT(alias) DO UPDATE SET
+                    canonical = excluded.canonical,
+                    fuente = excluded.fuente
+                """,
+                (alias_norm, canonical_norm, fuente),
+            )
+
+    def get_keyword_aliases(self) -> list[dict[str, Any]]:
+        return self.query("SELECT * FROM keyword_aliases ORDER BY alias")
 
     def upsert_tendencia_global(
         self, keyword_id: int, anio: int, conteo: int, fuente: str = "openalex"

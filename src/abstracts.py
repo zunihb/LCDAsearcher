@@ -66,6 +66,8 @@ def _openalex_search_work(
     titulo: str,
     mailto: str,
     anio: int | None = None,
+    doi: str | None = None,
+    max_attempts: int = 3,
 ) -> dict[str, Any] | None:
     """Busca el work en OpenAlex sin aceptar a ciegas el primer resultado.
 
@@ -73,27 +75,48 @@ def _openalex_search_work(
     DOI, autores o abstracts de otro paper. Ahora se ordena por similitud de
     título y se exige confianza mínima, usando año como segunda señal cuando está.
     """
-    try:
-        r = requests.get(
-            "https://api.openalex.org/works",
-            params={"search": titulo, "per_page": 5, "mailto": mailto},
-            timeout=25,
-        )
-        r.raise_for_status()
-        results = r.json().get("results", [])
-        if not results:
+    backoff = 5.0
+    for attempt in range(1, max_attempts + 1):
+        try:
+            r = requests.get(
+                "https://api.openalex.org/works",
+                params={"search": titulo, "per_page": 5, "mailto": mailto},
+                timeout=25,
+            )
+            if r.status_code == 429:
+                retry_after = r.headers.get("Retry-After") or r.json().get("retryAfter")
+                wait = float(retry_after) if str(retry_after).replace(".", "", 1).isdigit() else backoff
+                time.sleep(min(wait, 60.0))
+                backoff = min(backoff * 2, 60.0)
+                continue
+            r.raise_for_status()
+            results = r.json().get("results", [])
+            if not results:
+                return None
+            ranked = sorted(
+                results,
+                key=lambda w: _title_score(titulo, w.get("title") or ""),
+                reverse=True,
+            )
+            best = ranked[0]
+            if doi:
+                best_doi = (best.get("doi") or "").replace("https://doi.org/", "")
+                if best_doi and best_doi.lower() != doi.lower():
+                    for candidate in ranked:
+                        cand_doi = (candidate.get("doi") or "").replace("https://doi.org/", "")
+                        if cand_doi and cand_doi.lower() == doi.lower():
+                            best = candidate
+                            break
+            if _is_plausible_match(titulo, best, anio):
+                return best
             return None
-        ranked = sorted(
-            results,
-            key=lambda w: _title_score(titulo, w.get("title") or ""),
-            reverse=True,
-        )
-        best = ranked[0]
-        if _is_plausible_match(titulo, best, anio):
-            return best
-        return None
-    except Exception:
-        return None
+        except Exception:
+            if attempt < max_attempts:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60.0)
+                continue
+            return None
+    return None
 
 
 def _extract_authors_openalex(work: dict[str, Any]) -> list[dict[str, Any]]:
@@ -112,6 +135,8 @@ def _extract_authors_openalex(work: dict[str, Any]) -> list[dict[str, Any]]:
             "afiliacion": afiliacion,
             "orden": i,
             "openalex_author_id": (author.get("id") or "").split("/")[-1] or None,
+            "orcid_id": ((author.get("orcid") or "").split("/")[-1] or None),
+            "orcid_url": author.get("orcid") or None,
         })
     return authors
 
@@ -153,7 +178,7 @@ def enrich_paper_openalex(
     paper: dict[str, Any],
     mailto: str,
 ) -> bool:
-    work = _openalex_search_work(paper["titulo"], mailto, paper.get("anio"))
+    work = _openalex_search_work(paper["titulo"], mailto, paper.get("anio"), paper.get("doi"))
     if not work:
         return False
     meta = _work_to_metadata(work)
@@ -183,6 +208,8 @@ def enrich_paper_openalex(
             afiliacion=a.get("afiliacion"),
             orden=a.get("orden", 0),
             openalex_author_id=a.get("openalex_author_id"),
+            orcid_id=a.get("orcid_id"),
+            orcid_url=a.get("orcid_url"),
         )
     return True
 
@@ -249,16 +276,30 @@ def run_abstracts(
     scholar_pause_min: float = 2,
     scholar_pause_max: float = 4,
     use_proxies: bool = False,
+    reprocess_all: bool = False,
+    limit: int | None = None,
+    batch_size: int = 5,
+    batch_pause_sec: float = 3.0,
 ) -> dict[str, Any]:
     t0 = time.time()
-    papers = db.get_papers_sin_abstract()
+    papers = db.query("SELECT * FROM papers ORDER BY citado_por DESC, anio DESC") if reprocess_all else db.get_papers_sin_abstract()
+    if limit is not None and limit > 0:
+        papers = papers[:limit]
     total = len(papers)
     ok = 0
     fail = 0
 
-    print(f"      {total} papers sin abstract · fuente {source}", flush=True)
+    scope = "todos los papers" if reprocess_all else "papers sin abstract"
+    print(f"      {total} {scope} · fuente {source}", flush=True)
+
+    if source == "scholarly":
+        print(f"      [Scholar] pausa entre papers: {scholar_pause_min}-{scholar_pause_max}s", flush=True)
+    else:
+        print(f"      [OpenAlex] pausa entre papers: {pause_sec}s, lote cada {batch_size} papers ({batch_pause_sec}s pausa)", flush=True)
 
     for i, paper in enumerate(papers, 1):
+        titulo_corto = (paper["titulo"] or "")[:60]
+        print(f"      [{i}/{total}] {titulo_corto}...", end="", flush=True)
         success = False
         if source == "scholarly":
             success = enrich_paper_scholar(db, paper, use_proxies)
@@ -269,11 +310,14 @@ def run_abstracts(
 
         if success:
             ok += 1
+            print(" ✓", flush=True)
         else:
             fail += 1
+            print(" ✗", flush=True)
 
-        if i % 10 == 0 or i == total:
-            print(f"      [{i}/{total}] ok:{ok} sin_match:{fail}", flush=True)
+        if batch_size > 0 and i < total and i % batch_size == 0:
+            print(f"      -- pausa de lote ({batch_pause_sec}s) --", flush=True)
+            time.sleep(batch_pause_sec)
 
     dur = time.time() - t0
     db.log_metrica("abstracts", dur, f"{ok}/{total} con abstract, fuente={source}")

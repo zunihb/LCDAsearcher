@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from src.db import Database
+from src.topic_search import normalize_keyword
 
 load_dotenv()
 
@@ -190,7 +191,7 @@ def _sanitize_keywords(
         kw = re.sub(r"^\d+[\.\)]\s*", "", kw.strip())
         if not _is_valid_keyword(kw, titulo):
             continue
-        key = kw.lower()
+        key = normalize_keyword(kw)
         if key in seen:
             continue
         seen.add(key)
@@ -518,6 +519,14 @@ def run_keywords(
                 row = db.query_one("SELECT id FROM keywords WHERE termino = ?", (term,))
                 if row:
                     db.update_keyword_canonical(row["id"], canon)
+                    db.upsert_keyword_alias(term, canon, fuente="llm")
+            # Endurecer alias por normalización determinista
+            for term in unique_terms:
+                row = db.query_one("SELECT id, termino_canonico FROM keywords WHERE termino = ?", (term,))
+                if not row:
+                    continue
+                canon = row.get("termino_canonico") or term
+                db.upsert_keyword_alias(term, canon, fuente="normalized")
         except Exception as e:
             print(f"      [!] Normalización omitida: {e}", flush=True)
 

@@ -31,6 +31,7 @@ from src.cli_output import (
 from src.db import Database
 from src.tools import TOOLS, execute_tool
 from src.llm_backend import LLMBackend
+from src.topic_search import search_keywords_hybrid
 
 SYSTEM_PROMPT = """Eres el asistente de LCDA Searcher, un sistema de mapeo de investigación en electrónica de potencia.
 
@@ -48,7 +49,48 @@ Tienes acceso a una base de datos con investigadores, papers y keywords a travé
 - Si `search_papers` o `search_keywords` ya te dan suficiente info, NO llames `get_researcher_profile` para cada investigador.
 - Máximo 3-4 tool calls por turno. Si necesitas más, resume lo que tienes y pregunta al usuario.
 - Puedes llamar múltiples tools en paralelo si son independientes.
-- Para preguntas generales ("¿quién trabaja en X?"), usa `search_keywords` + `search_papers`. No perfiles individuales."""
+- Para preguntas generales ("¿quién trabaja en X?"), usa `search_topic_hybrid` + `search_papers`.
+- Si el usuario pide evidencia, usa `get_topic_evidence`.
+- Si el usuario pide comparar, usa `compare_researchers`.
+- Si pregunta por calidad, usa `get_data_quality_report` o `get_suspicious_records`.
+
+## Reglas de contexto (MUY IMPORTANTE)
+- Mantén el contexto de la conversación anterior. Si el usuario mencionó un año, tema o investigador antes, ÚSALO en las siguientes preguntas.
+- Ejemplo: si el usuario preguntó por "tendencias de 2026" y luego dice "papers de inversor multinivel", entiende que quiere papers de inversor multinivel DE 2026.
+- Usa `year_from` y `year_to` en `search_papers` cuando el usuario mencione un año o período.
+- Si el usuario dice "de este año", "de 2026", "del 2024-2026", SIEMPRE pasa los filtros de año a la tool."""
+
+
+def _detect_intent(text: str) -> str:
+    t = text.lower()
+    if any(k in t for k in ["compar", "vs", "diferencia", "compara"]):
+        return "compare"
+    if any(k in t for k in ["evidencia", "justifica", "demuestra", "prueba"]):
+        return "evidence"
+    if any(k in t for k in ["calidad", "sospech", "duplic", "faltante"]):
+        return "quality"
+    if any(k in t for k in ["tendenc", "crece", "crecimiento", "trend"]):
+        return "trend"
+    if any(k in t for k in ["quien", "qué investigador", "quienes trabajan", "trabaja en", "tema"]):
+        return "topic"
+    return "general"
+
+
+def _router_preview(db: Database, text: str) -> None:
+    intent = _detect_intent(text)
+    if intent == "topic":
+        rows = search_keywords_hybrid(db, text, limit=3)
+        console.print("  [dim]router → search_topic_hybrid[/dim]")
+        for r in rows:
+            console.print(f"  [dim]  · {r['keyword']} ({r['papers']} papers, score {r['score']})[/dim]")
+    elif intent == "quality":
+        console.print("  [dim]router → get_data_quality_report[/dim]")
+    elif intent == "compare":
+        console.print("  [dim]router → compare_researchers[/dim]")
+    elif intent == "evidence":
+        console.print("  [dim]router → get_topic_evidence[/dim]")
+    elif intent == "trend":
+        console.print("  [dim]router → get_trending_topics[/dim]")
 
 
 # ── Utilidades de display ────────────────────────────────────────────
@@ -148,6 +190,35 @@ def _cmd_fuentes(db: Database) -> None:
     print_db_stats(stats[0])
 
 
+def _cmd_hibrido(db: Database, term: str) -> None:
+    from src.topic_search import search_keywords_hybrid
+
+    rows = search_keywords_hybrid(db, term, limit=10)
+    if not rows:
+        print_info("No encontré resultados con la búsqueda híbrida.")
+        return
+    for r in rows:
+        console.print(f"[bold cyan]{r['keyword']}[/bold cyan] → papers={r['papers']} citas={r['citas']} score={r['score']}")
+
+
+def _cmd_calidad(db: Database) -> None:
+    from src.data_quality import get_data_quality_report
+
+    report = get_data_quality_report(db)
+    console.print(
+        Panel(
+            f"[bold]Cobertura abstracts[/bold]: {report['cobertura_abstract']}%\n"
+            f"[bold]Papers con abstract[/bold]: {report['papers_con_abstract']}/{report['papers']}\n"
+            f"[bold]DOI duplicados[/bold]: {len(report['doi_duplicados'])}\n"
+            f"[bold]OpenAlex duplicados[/bold]: {len(report['openalex_duplicados'])}\n"
+            f"[bold]Keywords fragmentadas[/bold]: {len(report['keywords_fragmentadas'])}",
+            title="[bold bright_white]Calidad de datos[/bold bright_white]",
+            border_style="bright_magenta",
+            padding=(0, 2),
+        )
+    )
+
+
 # ── Agente loop ──────────────────────────────────────────────────────
 
 
@@ -193,6 +264,8 @@ def run_chat(db: Database, client=None) -> None:
             ("/matches", "ver matches temáticos top"),
             ("/perfil <nombre>", "resumen de un investigador"),
             ("/fuentes", "estadísticas de la base de datos"),
+            ("/calidad", "reporte de calidad de datos"),
+            ("/tema <term>", "búsqueda híbrida de un tema"),
             ("/historial", "ver sesiones de chat guardadas"),
             ("/limpiar", "limpiar historial de conversación"),
             ("/salir", "salir del chat"),
@@ -242,6 +315,19 @@ def run_chat(db: Database, client=None) -> None:
             _cmd_fuentes(db)
             continue
 
+        if cmd == "/calidad":
+            _cmd_calidad(db)
+            continue
+
+        if cmd.startswith("/tema"):
+            parts = user_input.split(maxsplit=1)
+            term = parts[1] if len(parts) > 1 else ""
+            if not term:
+                print_info("Uso: /tema <término>")
+            else:
+                _cmd_hibrido(db, term)
+            continue
+
         if cmd == "/limpiar":
             historial.clear()
             print_info("Historial limpiado.")
@@ -259,12 +345,13 @@ def run_chat(db: Database, client=None) -> None:
 
         if user_input.startswith("/"):
             print_error(f"Comando desconocido: {user_input}")
-            print_info("Comandos: /matches, /perfil, /fuentes, /limpiar, /salir")
+            print_info("Comandos: /matches, /perfil, /fuentes, /calidad, /tema, /limpiar, /salir")
             continue
 
         # ── Ejecutar agente ──
         t0 = time.time()
         try:
+            _router_preview(db, user_input)
             content = _agent_loop(llm, db, user_input, historial)
             _render_response(content)
         except Exception as e:

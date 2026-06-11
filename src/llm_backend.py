@@ -17,20 +17,39 @@ def _convert_tools_to_gemini(openai_tools: list[dict]) -> list:
     """Convierte tools de formato OpenAI a formato Gemini."""
     from google.genai import types
 
+    def _convert_schema(schema: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        typ = schema.get("type", "string")
+        if typ == "array":
+            out["type"] = "ARRAY"
+            items = schema.get("items") or {}
+            if isinstance(items, dict):
+                out["items"] = _convert_schema(items)
+        elif typ == "object":
+            out["type"] = "OBJECT"
+            props = schema.get("properties", {})
+            out["properties"] = {k: _convert_schema(v) for k, v in props.items() if isinstance(v, dict)}
+            if schema.get("required"):
+                out["required"] = schema["required"]
+        else:
+            out["type"] = str(typ).upper()
+        if "description" in schema:
+            out["description"] = schema["description"]
+        if "enum" in schema:
+            out["enum"] = schema["enum"]
+        if "minItems" in schema:
+            out["minItems"] = schema["minItems"]
+        if "maxItems" in schema:
+            out["maxItems"] = schema["maxItems"]
+        return out
+
     function_declarations = []
     for tool in openai_tools:
         fn = tool["function"]
         params = fn.get("parameters", {}).get("properties", {})
         required = fn.get("parameters", {}).get("required", [])
 
-        gemini_params = {}
-        for pname, pdef in params.items():
-            schema = {"type": pdef.get("type", "string").upper()}
-            if "description" in pdef:
-                schema["description"] = pdef["description"]
-            if "enum" in pdef:
-                schema["enum"] = pdef["enum"]
-            gemini_params[pname] = schema
+        gemini_params = {pname: _convert_schema(pdef) for pname, pdef in params.items()}
 
         function_declarations.append({
             "name": fn["name"],
